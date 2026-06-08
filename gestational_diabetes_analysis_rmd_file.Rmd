@@ -1,0 +1,7 @@
+---
+title: "Gestational Diabetes Risk Prediction"
+subtitle: "CIS 690  Statistical Inference Packages"
+author: "Group 3: Manav, Davis, Daniela, Abenezer"
+date: "Jun, 2026"
+output: word_document
+---
