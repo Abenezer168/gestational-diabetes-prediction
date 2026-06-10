@@ -1,0 +1,186 @@
+---
+title: "Gestational Diabetes Risk Prediction"
+author: 'Group 3: Manav, Davis, Daniela, Abenezer'
+date: "2026-06-09"
+output: word_document
+---
+# 2a
+```{r load/view}
+patients <- read.csv("patients.csv")
+
+head(patients)
+```
+
+```{r inspect-structure}
+str(patients)
+```
+First, we load the data set into R and inspect the structure of the data set to review the number of observations, variables, variable names, and data types.
+
+```{r summary-stats}
+summary(patients)
+```
+```{r standard-deviation}
+sapply(patients, sd)
+```
+Summary statistics were calculated to examine the spread of each variable. The results showed possible data quality issues because several clinical variables had a minimum of zero, including glucose, blood pressure, skin thickness, insulin, and BMI. These values need to be examined more closely during cleaning steps.
+
+# 2c
+```{r loading-ggplot2}
+library(ggplot2)
+```
+```{r}
+ggplot(patients, aes(x = factor(Diagnosis))) +
+  geom_bar() +
+  labs(title = "Count of Diagnosis Groups",
+       x = "Diagnosis",
+       y = "Count")
+```
+
+The bar chart shows that there are more patients without a GEDM diagnosis than with a diagnosis. That means the outcome variable is somewhat imbalanced, which should be considered when evaluating classification model performance.
+
+```{r numeric-features-histogram}
+ggplot(patients, aes(x = Glucose)) +
+  geom_histogram(bins = 30) +
+  labs(title = "Distribution of Glucose",
+       x = "Glucose",
+       y = "Count")
+
+ggplot(patients, aes(x = BloodPressure)) +
+  geom_histogram(bins = 30) +
+  labs(title = "Distribution of Blood Pressure",
+       x = "Blood Pressure",
+       y = "Count")
+
+ggplot(patients, aes(x = BMI)) +
+  geom_histogram(bins = 30) +
+  labs(title = "Distribution of BMI",
+       x = "BMI",
+       y = "Count")
+```
+
+These histograms show that blood pressure, glucose, and BMI are mostly concentrated around the middle of their ranges. Blood pressure is centered mainly around 60 to 80, glucose around 90 to 130, and BMI around 25 to 40. Each plot also shows a small group of values at or near zero, which stands apart from the rest of the distribution. These zeros will need to be addressed during cleaning.
+
+```{r feature-boxplot-by-diagnosis}
+ggplot(patients, aes(x = factor(Diagnosis), y = Pregnancies)) +
+  geom_boxplot() +
+  labs(title = "Pregnancies by Diagnosis",
+       x = "Diagnosis",
+       y = "Pregnancies")
+
+ggplot(patients, aes(x = factor(Diagnosis), y = Glucose)) +
+  geom_boxplot() +
+  labs(title = "Glucose by Diagnosis",
+       x = "Diagnosis",
+       y = "Glucose")
+
+ggplot(patients, aes(x = factor(Diagnosis), y = BloodPressure)) +
+  geom_boxplot() +
+  labs(title = "Blood Pressure by Diagnosis",
+       x = "Diagnosis",
+       y = "Blood Pressure")
+
+ggplot(patients, aes(x = factor(Diagnosis), y = SkinThickness)) +
+  geom_boxplot() +
+  labs(title = "Skin Thickness by Diagnosis",
+       x = "Diagnosis",
+       y = "Skin Thickness")
+
+ggplot(patients, aes(x = factor(Diagnosis), y = Insulin)) +
+  geom_boxplot() +
+  labs(title = "Insulin by Diagnosis",
+       x = "Diagnosis",
+       y = "Insulin")
+
+ggplot(patients, aes(x = factor(Diagnosis), y = BMI)) +
+  geom_boxplot() +
+  labs(title = "BMI by Diagnosis",
+       x = "Diagnosis",
+       y = "BMI")
+
+ggplot(patients, aes(x = factor(Diagnosis), y = Pedigree)) +
+  geom_boxplot() +
+  labs(title = "Pedigree by Diagnosis",
+       x = "Diagnosis",
+       y = "Pedigree")
+
+ggplot(patients, aes(x = factor(Diagnosis), y = Age)) +
+  geom_boxplot() +
+  labs(title = "Age by Diagnosis",
+       x = "Diagnosis",
+       y = "Age")
+```
+These box plots compare each predictor between patients without a GDM diagnosis, which is designated as 0, and patients with a GDM diagnosis, which is designated as 1. The diagnosed group generally shows higher values for pregnancies, glucose, BMI, pedigree, and age. Glucose shows one of the clearest separations, with the diagnosed group having noticeably higher median and interquartile range. Blood pressure shows only a small difference between the groups, and most importantly, the data quality issue shown here is that skin thickness and insulin may have values concentrated at zero, which indicate missing values or missing measurements.
+
+```{r age/glucose-diagnosis}
+ggplot(patients, aes(x = Age, y = Glucose, color = factor(Diagnosis))) +
+  geom_point() +
+  labs(title = "Age and Glucose by Diagnosis",
+       x = "Age",
+       y = "Glucose",
+       color = "Diagnosis")
+```
+This scatterplot shows the relationship between age and glucose, colored with the diagnosis. Diagnosed patients appear more frequently at higher glucose values, while non-diagnosed patients appear to be more concentrated at lower to moderate glucose values. Age does not show as clear of a separation as glucose, because both diagnosis groups appear across much of the age range. The plot also shows a few unusual data points, including glucose values of zero and some unusually high ages, including one around the age of 80, which should be reviewed as possible data quality issues.
+
+```{r glucose/bmi-diagnosis}
+ggplot(patients, aes(x = BMI, y = Glucose, color = factor(Diagnosis))) +
+  geom_point() +
+  labs(title = "BMI and Glucose by Diagnosis",
+       x = "BMI",
+       y = "Glucose",
+       color = "Diagnosis")
+```
+This scatter plot shows the relationship between BMI and glucose, colored by diagnosis. Diagnosed patients appear more common at higher glucose levels, especially above roughly 125 to 140. BMI also appears somewhat higher among diagnosed patients, but the separation is not as clear. The plot shows possible data quality issues as well, including BMI values at zero and glucose values at zero, which are not clinically realistic and, again, should be reviewed during cleaning.
+
+# 2d
+```{r checking-for-na}
+colSums(is.na(patients))
+```
+```{r checking-for-0s}
+colSums(patients == 0)
+```
+No variables contained values coded as NA. However, several variables contained values of zero that are likely invalid or represent missing measurements. Zeros for things like pregnancy and diagnosis are valid because they represent no prior pregnancies and no diagnosis. In contrast, zeros for glucose, blood pressure, skin thickness, insulin, and BMI are not realistic and are highly suspicious, so they should be treated as missing values for cleaning.
+
+```{r data-cleaning}
+patients_clean <- patients
+
+invalid_zero_vars <- c("Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI")
+
+patients_clean[invalid_zero_vars] <- lapply(
+  patients_clean[invalid_zero_vars],
+  function(x) ifelse(x == 0, NA, x)
+)
+```
+```{r}
+colSums(is.na(patients_clean))
+```
+```{r impute-medians}
+patients_clean$Glucose[is.na(patients_clean$Glucose)] <- median(patients_clean$Glucose, na.rm = TRUE)
+
+patients_clean$BloodPressure[is.na(patients_clean$BloodPressure)] <- median(patients_clean$BloodPressure, na.rm = TRUE)
+
+patients_clean$BMI[is.na(patients_clean$BMI)] <- median(patients_clean$BMI, na.rm = TRUE)
+```
+```{r}
+colSums(is.na(patients_clean))
+```
+```{r}
+str(patients_clean)
+```
+After invalid zeros were converted to missing values, glucose, blood pressure, and BMI were imputed using the median because they had relatively small amounts of missingness. Skin thickness and insulin had substantial missingness, with 227 for skin thickness and 374 for insulin in terms of missing values remaining. These variables were kept in the clean dataset for now and will be further evaluated during feature selection.
+
+# 2e
+```{r outliers-cleaned}
+detect_outliers <- function(x) {
+  q1 <- quantile(x, 0.25, na.rm = TRUE)
+  q3 <- quantile(x, 0.75, na.rm = TRUE)
+  iqr <- q3 - q1
+  
+  lower <- q1 - 1.5 * iqr
+  upper <- q3 + 1.5 * iqr
+  
+  sum(x < lower | x > upper, na.rm = TRUE)
+}
+
+sapply(patients_clean, detect_outliers)
+```
+The IQR identified possible outliers in pregnancies, blood pressure, skin thickness, insulin, BMI, pedigree, and age. Glucose and diagnosis did not have any outliers using this method. Most of the flagged values were retained because they represent real clinical variation rather than a data entry error. However, age was treated as a separate concern because given that this is a GDM dataset, The individuals over around the age of 50 may not fit the expected GDM screening population. These records were not removed at this stage but were flagged for group review before final modeling.
