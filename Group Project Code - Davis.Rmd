@@ -153,20 +153,53 @@ patients_clean[invalid_zero_vars] <- lapply(
 ```{r}
 colSums(is.na(patients_clean))
 ```
-```{r impute-medians}
-patients_clean$Glucose[is.na(patients_clean$Glucose)] <- median(patients_clean$Glucose, na.rm = TRUE)
-
-patients_clean$BloodPressure[is.na(patients_clean$BloodPressure)] <- median(patients_clean$BloodPressure, na.rm = TRUE)
-
-patients_clean$BMI[is.na(patients_clean$BMI)] <- median(patients_clean$BMI, na.rm = TRUE)
-```
 ```{r}
-colSums(is.na(patients_clean))
+compare_imputation_methods <- function(data, target_variable) {
+  
+  set.seed(123)
+  
+  predictor_vars <- c("Pregnancies", "Glucose", "BloodPressure", "BMI", "Pedigree", "Age")
+  predictor_vars <- predictor_vars[predictor_vars != target_variable]
+  
+  observed_rows <- which(
+    !is.na(data[[target_variable]]) &
+      complete.cases(data[predictor_vars])
+  )
+  
+  hide_rows <- sample(observed_rows, size = round(0.30 * length(observed_rows)))
+  train_rows <- setdiff(observed_rows, hide_rows)
+  
+  true_values <- data[[target_variable]][hide_rows]
+  
+  median_value <- median(data[[target_variable]][train_rows], na.rm = TRUE)
+  median_predictions <- rep(median_value, length(hide_rows))
+  
+  regression_formula <- as.formula(
+    paste(target_variable, "~", paste(predictor_vars, collapse = " + "))
+  )
+  
+  regression_model <- lm(regression_formula, data = data[train_rows, ])
+  regression_predictions <- predict(regression_model, newdata = data[hide_rows, ])
+  
+  data.frame(
+    Variable = target_variable,
+    Hidden_Values = length(hide_rows),
+    Median_MAE = mean(abs(true_values - median_predictions)),
+    Regression_MAE = mean(abs(true_values - regression_predictions)),
+    Median_RMSE = sqrt(mean((true_values - median_predictions)^2)),
+    Regression_RMSE = sqrt(mean((true_values - regression_predictions)^2))
+  )
+}
+
+rbind(
+  compare_imputation_methods(patients_clean, "Glucose"),
+  compare_imputation_methods(patients_clean, "BloodPressure"),
+  compare_imputation_methods(patients_clean, "BMI"),
+  compare_imputation_methods(patients_clean, "SkinThickness"),
+  compare_imputation_methods(patients_clean, "Insulin")
+)
 ```
-```{r}
-str(patients_clean)
-```
-After invalid zeros were converted to missing values, glucose, blood pressure, and BMI were imputed using the median because they had relatively small amounts of missingness. Skin thickness and insulin had substantial missingness, with 227 for skin thickness and 374 for insulin in terms of missing values remaining. These variables were kept in the clean dataset for now and will be further evaluated during feature selection.
+For imputation, median imputation was compared to regression for the variables where invalid zeros had been converted to missing values. This comparison was done by temporarily hiding a portion of the known values, imputing those values using each method, and then comparing the imputed values to the true values. MAE measures the average size of the prediction errors, while RMSE also measures prediction error, but gives more weight to bigger mistakes. For both measures, lower values indicate better performance. Regression imputation had lower MAE and RMSE than median imputation for glucose, blood pressure, BMI, skin thickness, and insulin, so regression is the choice for these variables in the cleaned data set. Skin thickness and insulin were not used as predictors for imputing other variables due to their high missingness. Using them as predictors would limit the model to fewer complete rows, so we chose a simpler, more consistent predictor set.
 
 # 2e
 ```{r outliers-cleaned}
@@ -183,4 +216,4 @@ detect_outliers <- function(x) {
 
 sapply(patients_clean, detect_outliers)
 ```
-The IQR identified possible outliers in pregnancies, blood pressure, skin thickness, insulin, BMI, pedigree, and age. Glucose and diagnosis did not have any outliers using this method. Most of the flagged values were retained because they represent real clinical variation rather than a data entry error. However, age was treated as a separate concern because given that this is a GDM dataset, The individuals over around the age of 50 may not fit the expected GDM screening population. These records were not removed at this stage but were flagged for group review before final modeling.
+After running the outlier calculation, we identified possible outliers in pregnancies, blood pressure, skin thickness, insulin, BMI, pedigree, and age. Glucose and diagnosis did not have any outliers. Most values were retained because they may represent real clinical variation rather than data entry errors. Age was noted as a separate concern because some of the high values may not fit the expected GDM screening population. However, no age values were removed or changed at this stage.
