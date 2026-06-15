@@ -4,6 +4,8 @@ author: 'Group 3: Manav, Davis, Daniela, Abenezer'
 date: "2026-06-09"
 output: word_document
 ---
+##Step 2
+
 # 2a
 ```{r load/view}
 patients <- read.csv("patients.csv")
@@ -217,3 +219,78 @@ detect_outliers <- function(x) {
 sapply(patients_clean, detect_outliers)
 ```
 After running the outlier calculation, we identified possible outliers in pregnancies, blood pressure, skin thickness, insulin, BMI, pedigree, and age. Glucose and diagnosis did not have any outliers. Most values were retained because they may represent real clinical variation rather than data entry errors. Age was noted as a separate concern because some of the high values may not fit the expected GDM screening population. However, no age values were removed or changed at this stage.
+
+##Step 3
+
+#3a
+```{r correlation-analysis}
+numeric_data <- patients_clean[sapply(patients_clean, is.numeric)]
+
+cor_matrix <- cor(numeric_data, use = "pairwise.complete.obs")
+
+diagnosis_correlations <- data.frame(
+  Variable = rownames(cor_matrix),
+  Correlation_With_Diagnosis = cor_matrix[, "Diagnosis"]
+)
+
+diagnosis_correlations <- diagnosis_correlations[
+  diagnosis_correlations$Variable != "Diagnosis",
+]
+
+diagnosis_correlations <- diagnosis_correlations[
+  order(abs(diagnosis_correlations$Correlation_With_Diagnosis), decreasing = TRUE),
+]
+
+diagnosis_correlations
+```
+For the beginning of step 3, we examined how each predictor variable was associated with diagnosis. Since diagnosis is coded for 1 as a positive GDM diagnosis and 0 for no diagnosis, a positive Pearson correlation indicates that higher values of a predictor are associated with a greater likelihood of getting a positive diagnosis. A correlation close to 0 would suggest that the variable has little individual linear association with diagnosis, while a negative correlation would indicate that higher values are more associated with not having a diagnosis.
+
+```{r feature-selection}
+model_data_all <- patients_clean[
+  complete.cases(patients_clean[, c(
+    "Pregnancies", "Glucose", "BloodPressure", "SkinThickness",
+    "Insulin", "BMI", "Pedigree", "Age", "Diagnosis"
+  )]),
+  c(
+    "Pregnancies", "Glucose", "BloodPressure", "SkinThickness",
+    "Insulin", "BMI", "Pedigree", "Age", "Diagnosis"
+  )
+]
+
+
+#logistic regression model with all predictors
+full_model_all <- glm(
+  Diagnosis ~ Pregnancies + Glucose + BloodPressure + SkinThickness +
+    Insulin + BMI + Pedigree + Age,
+  data = model_data_all,
+  family = binomial
+)
+
+#stepwise feature selection
+stepwise_model_all <- step(full_model_all, direction = "both")
+
+summary(stepwise_model_all)
+```
+
+We used a stepwise logistic regression as a model-based feature selection method. The full model included all available predictors, which includes pregnancies, glucose, blood pressure, skin thickness, insulin, BMI, pedigree, and age. Stepwise selection used AIC to remove variables that did not improve the model enough to justify including them. The AIC decreased from 362.02 in the full model to 356.89 in the final selected model.
+The final selected model included pregnancies, glucose, BMI, pedigree, and age. Blood pressure, insulin, and skin thickness were removed by the stepwise process. Glucose, BMI, and pedigree showed the clearest evidence as predictors, while age and pregnancies were retained but should be interpreted more cautiously.
+
+```{r standardization}
+#dataset using only selected predictors
+model_data_selected <- patients_clean[
+  complete.cases(patients_clean[, c(
+    "Pregnancies", "Glucose", "BMI", "Pedigree", "Age", "Diagnosis"
+  )]),
+  c("Pregnancies", "Glucose", "BMI", "Pedigree", "Age", "Diagnosis")
+]
+
+#standardize predictor variables
+model_data_standardized <- model_data_selected
+
+model_data_standardized[, c("Pregnancies", "Glucose", "BMI", "Pedigree", "Age")] <-
+  scale(model_data_standardized[, c("Pregnancies", "Glucose", "BMI", "Pedigree", "Age")])
+
+summary(model_data_standardized)
+```
+
+After feature selection, we standardized the selected predictor variables, which were pregnancies, glucose, BMI, pedigree, and age. Standardization converts each predictor into a z-score-like value by subtracting the variable's mean and dividing by its standard deviation. This means that a value of zero represents an average value for a given predictor. This step is useful because the predictors are measured on different scales. For example, glucose, BMI, age, and pedigree all use different units and ranges. Standardizing them places predictors on a comparable scale before we build the model. This prepares the dataset for step 4.
