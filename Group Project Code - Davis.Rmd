@@ -294,3 +294,254 @@ summary(model_data_standardized)
 ```
 
 After feature selection, we standardized the selected predictor variables, which were pregnancies, glucose, BMI, pedigree, and age. Standardization converts each predictor into a z-score-like value by subtracting the variable's mean and dividing by its standard deviation. This means that a value of zero represents an average value for a given predictor. This step is useful because the predictors are measured on different scales. For example, glucose, BMI, age, and pedigree all use different units and ranges. Standardizing them places predictors on a comparable scale before we build the model. This prepares the dataset for step 4.
+
+##Step 4
+
+#4a
+```{r data-partitioning}
+set.seed(123)
+
+#separate row indexes for each Diagnosis group
+index_0 <- which(model_data_selected$Diagnosis == 0)
+index_1 <- which(model_data_selected$Diagnosis == 1)
+
+#80% of each group for the training set
+train_0 <- sample(index_0, size = floor(0.80 * length(index_0)))
+train_1 <- sample(index_1, size = floor(0.80 * length(index_1)))
+
+#combine the training indexes
+train_index <- c(train_0, train_1)
+
+#training and testing datasets
+train_data <- model_data_selected[train_index, ]
+test_data <- model_data_selected[-train_index, ]
+
+dim(train_data)
+dim(test_data)
+
+#check Diagnosis proportions in the full, training, and testing data
+prop.table(table(model_data_selected$Diagnosis))
+prop.table(table(train_data$Diagnosis))
+prop.table(table(test_data$Diagnosis))
+```
+
+The modeling dataset was split into training and testing sets using an 80-20 split. Because the outcome variable was imbalanced, with 65% as non-GDM cases and 35% as GDM cases, the split was stratified by diagnosis. This ensured that the training and testing sets had nearly identical proportions of non-diagnosed to diagnosed patients. The final split includes 601 training observations and 151 testing observations. This supports a fair model evaluation because the model is tested on unseen data with a distribution similar to our original dataset. Both datasets contain approximately 64.9% non-GDM cases and 35.1% GDM cases.
+
+#4b
+```{r modeling}
+#logistic regression model using the training data
+logistic_model <- glm(
+  Diagnosis ~ .,
+  data = train_data,
+  family = binomial
+)
+
+summary(logistic_model)
+```
+
+A logistic regression model was built using the training dataset and our selected features. Logistic regression was appropriate because our dependent variable, diagnosis, is binary, and because the logistic regression provides an interpretable baseline for clinical prediction. In our model, pregnancies, glucose, BMI, and pedigree were statistically significant predictors for GDM diagnosis. Age was not statistically significant in this model. The positive coefficients indicate that higher values of these predictors, generally speaking, are associated with higher predicted risk of GDM. These findings align with our literature review, which identified glucose, BMI, pregnancy history, and family history-related risk as important predictors for GDM [4], [9].
+
+#4c
+```{r evaluation}
+#predict probabilities on the testing data
+test_prob <- predict(
+  logistic_model,
+  newdata = test_data,
+  type = "response"
+)
+
+#convert probabilities to predicted classes using 0.50 threshold
+test_pred <- ifelse(test_prob >= 0.50, 1, 0)
+
+#make actual and predicted values factors with same levels
+actual <- factor(test_data$Diagnosis, levels = c(0, 1))
+predicted <- factor(test_pred, levels = c(0, 1))
+
+#confusion matrix
+conf_matrix <- table(Actual = actual, Predicted = predicted)
+conf_matrix
+
+#extract values from confusion matrix
+TN <- conf_matrix["0", "0"]
+FP <- conf_matrix["0", "1"]
+FN <- conf_matrix["1", "0"]
+TP <- conf_matrix["1", "1"]
+
+#calculate evaluation metrics
+accuracy <- (TP + TN) / sum(conf_matrix)
+precision <- TP / (TP + FP)
+recall <- TP / (TP + FN)
+specificity <- TN / (TN + FP)
+f1_score <- 2 * ((precision * recall) / (precision + recall))
+f2_score <- 5 * ((precision * recall) / ((4 * precision) + recall))
+
+#put metrics into a table
+metrics <- data.frame(
+  Accuracy = accuracy,
+  Precision = precision,
+  Recall = recall,
+  Specificity = specificity,
+  F1_Score = f1_score,
+  F2_Score = f2_score
+)
+
+round(metrics, 3)
+
+#calculate ROC-AUC using predicted probabilities
+auc_function <- function(actual, predicted_prob) {
+  actual_numeric <- as.numeric(as.character(actual))
+  ranks <- rank(predicted_prob)
+  n_pos <- sum(actual_numeric == 1)
+  n_neg <- sum(actual_numeric == 0)
+  
+  auc <- (sum(ranks[actual_numeric == 1]) - n_pos * (n_pos + 1) / 2) / 
+    (n_pos * n_neg)
+  
+  return(auc)
+}
+
+roc_auc <- auc_function(actual, test_prob)
+round(roc_auc, 3)
+```
+
+The logistic regression model was evaluated on the testing data set using a classification threshold of 50%. At this threshold, the model achieved accuracy of about 77.5%, meaning it correctly classified 77.5% of patients overall. The precision was about 73.2%, meaning that when the model predicted a patient as having GDM, it was correct 73.2% of the time. However, recall was lower at 56.6%, meaning the model correctly identified only 56.6% of the patients who actually had GDM. Specificity was higher at 88.8%, showing that our model was better at correctly identifying non-GDM patients rather than identifying GDM patients. The ROC AUC was 85.9%. This means that the model had a good overall ability to separate GDM and non-GDM cases across possible thresholds. However, the recall value at the default 50% threshold shows that the model still missed a meaningful number of GDM cases. In a clinical context, this is important because failing to identify high-risk patients could delay monitoring or intervention. Therefore, while the model shows useful predictive ability overall, the threshold of 50% may not be the best one if the goal is to prioritize identifying more patients with GDM.
+
+Because our literature review frames this model as a screening tool rather than a final diagnostic tool, recall is especially important. Our review explains that missing a positive GDM case may delay monitoring or intervention, so making false negatives is a major concern in this clinical context [15]. Therefore, the next step is to compare lower classification thresholds to determine whether recall improves while accuracy, precision, and specificity remain acceptable.
+
+```{r threshhold-comparision}
+calculate_metrics <- function(threshold) {
+  
+  predicted_class <- ifelse(test_prob >= threshold, 1, 0)
+  
+  actual <- factor(test_data$Diagnosis, levels = c(0, 1))
+  predicted <- factor(predicted_class, levels = c(0, 1))
+  
+  cm <- table(Actual = actual, Predicted = predicted)
+  
+  TN <- cm["0", "0"]
+  FP <- cm["0", "1"]
+  FN <- cm["1", "0"]
+  TP <- cm["1", "1"]
+  
+  accuracy <- (TP + TN) / sum(cm)
+  precision <- TP / (TP + FP)
+  recall <- TP / (TP + FN)
+  specificity <- TN / (TN + FP)
+  f1_score <- 2 * ((precision * recall) / (precision + recall))
+  f2_score <- 5 * ((precision * recall) / ((4 * precision) + recall))
+  
+  data.frame(
+    Threshold = threshold,
+    Accuracy = accuracy,
+    Precision = precision,
+    Recall = recall,
+    Specificity = specificity,
+    F1_Score = f1_score,
+    F2_Score = f2_score
+  )
+}
+
+threshold_results <- rbind(
+  calculate_metrics(0.50),
+  calculate_metrics(0.45),
+  calculate_metrics(0.40),
+  calculate_metrics(0.35),
+  calculate_metrics(0.30)
+)
+
+round(threshold_results, 3)
+```
+
+The threshold comparison showed that lowering the classification threshold improved recall, which is important in this clinical context. The default of a 50% threshold had a recall of 56.6%, meaning the model missed a substantial amount of GDM cases. Lowering the threshold to 35% improved recall to 77.4%, while also producing the highest overall accuracy at 79.5%, while also having the highest F1 score at 72.6%. Although the 30% threshold produced the highest recall at 83%, it also reduced precision and specificity substantially. Therefore, the 35% threshold appears to provide the best balance between identifying more actual GDM cases while still maintaining acceptable overall performance from the model.
+
+When compared with the literature review, our logistic regression model showed reasonable predictive performance, especially with a ROC-AUC of 85.9%. However, a direct comparison to published studies should be viewed with caution because these reviewed studies used different datasets, different validation methods, had different sample sizes, and predictors. Our literature review noted that model performance can vary substantially depending on the dataset and validation approach [4]. In addition to this, our dataset is relatively small, lacks demographic variables, and uses a limited set of routinely collected clinical predictors. These differences might explain why our model shows a useful overall separation but still requires a threshold adjustment to improve recall in a clinical screening context.
+
+#4d
+```{r odds-ratios}
+odds_ratios <- data.frame(
+  Predictor = names(coef(logistic_model)),
+  Coefficient = coef(logistic_model),
+  Odds_Ratio = exp(coef(logistic_model)),
+  Lower_95_CI = exp(confint.default(logistic_model)[, 1]),
+  Upper_95_CI = exp(confint.default(logistic_model)[, 2]),
+  P_Value = summary(logistic_model)$coefficients[, 4]
+)
+
+odds_ratios$Coefficient <- round(odds_ratios$Coefficient, 3)
+odds_ratios$Odds_Ratio <- round(odds_ratios$Odds_Ratio, 3)
+odds_ratios$Lower_95_CI <- round(odds_ratios$Lower_95_CI, 3)
+odds_ratios$Upper_95_CI <- round(odds_ratios$Upper_95_CI, 3)
+odds_ratios$P_Value <- round(odds_ratios$P_Value, 4)
+
+odds_ratios
+```
+
+The odds ratio results helped us interpret the logistic regression model in practical terms. Pregnancies, glucose, BMI, and pedigree were all positively associated with the GDM diagnosis. Holding the other features consistent, each additional pregnancy was associated with 1.131 times higher odds of GDM. Each one-unit increase in glucose was associated with 1.035 times higher odds of GDM, and each one-unit increase in BMI was associated with 1.091 times higher odds. The pedigree variable had an odds ratio of 1.996, suggesting that higher family history-related diabetes risk was associated with substantially higher odds of GDM. These findings align with the literature review, which identified glucose, BMI, pregnancy history, and family history risk as important predictors for GDM [4], [9].
+
+Age had an odds ratio of 1.004 and was not statistically significant, suggesting that age did not add meaningful independent predictive value after accounting for the other features in this model. Although age is commonly identified in the literature as a GDM risk factor, it was retained because it was selected during feature selection and is supported by prior research.
+
+Another important point is that although pedigree had the largest odds ratio, this reflects a one-unit increase in that variable, which may be a large change. Glucose had the strongest statistical evidence in the model, and remains one of the most important predictors, especially because glucose values vary over a wider range and are directly related to a GDM diagnosis.
+
+```{r calibration}
+calibration_data <- data.frame(
+  Actual = test_data$Diagnosis,
+  Predicted_Probability = test_prob
+)
+
+#put predicted probabilities into risk bins
+calibration_data$Risk_Group <- cut(
+  calibration_data$Predicted_Probability,
+  breaks = c(0, 0.20, 0.40, 0.60, 0.80, 1),
+  include.lowest = TRUE
+)
+
+#compare average predicted risk to observed GDM rate in each group
+calibration_table <- aggregate(
+  cbind(Predicted_Probability, Actual) ~ Risk_Group,
+  data = calibration_data,
+  FUN = mean
+)
+
+group_counts <- aggregate(
+  Actual ~ Risk_Group,
+  data = calibration_data,
+  FUN = length
+)
+
+calibration_table$N <- group_counts$Actual
+
+#rename columns
+names(calibration_table) <- c(
+  "Risk_Group",
+  "Average_Predicted_Risk",
+  "Observed_GDM_Rate",
+  "N"
+)
+calibration_table$Average_Predicted_Risk <- round(calibration_table$Average_Predicted_Risk, 3)
+calibration_table$Observed_GDM_Rate <- round(calibration_table$Observed_GDM_Rate, 3)
+
+calibration_table
+```
+
+Calibration was assessed by grouping patients into predicted risk ranges and comparing the average predicted probability with the observed GDM rate in each group. Overall, the model appeared reasonably well-calibrated. In the 20-40%, 40-60%, and 60-80% groups, the average predicted risks were close to the observed GDM rate. The lowest risk group showed some overestimation, while the highest risk group showed underestimation because all patients in that group had GDM. However, it should be noted that the highest risk group only contained 14 patients. Overall, calibration results suggest that the model's predicted probabilities were reasonably consistent with the observed GDM rate.
+
+```{r correction}
+#predictor p-values
+raw_p_values <- summary(logistic_model)$coefficients[-1, 4]
+
+#Benjamini-Hochberg false discovery rate correction
+adjusted_p_values <- p.adjust(raw_p_values, method = "BH")
+
+multiple_testing_results <- data.frame(
+  Predictor = names(raw_p_values),
+  Raw_P_Value = raw_p_values,
+  Adjusted_P_Value = adjusted_p_values
+)
+
+multiple_testing_results$Raw_P_Value <- round(multiple_testing_results$Raw_P_Value, 4)
+multiple_testing_results$Adjusted_P_Value <- round(multiple_testing_results$Adjusted_P_Value, 4)
+
+multiple_testing_results
+```
+
+Multiple p-values were interpreted in the logistic regression model. To reduce the risk of overstating statistical significance, a Benjamini-Hochberg correction was applied. After correction, pregnancies, glucose, and BMI remained statistically significant predictors. Pedigree was significant before correction, but its adjusted p-value was 0.0504, which is slightly above the 0.05 threshold. Therefore, pedigree should be interpreted cautiously as a predictor. Age remained non-significant after correction.
