@@ -1,7 +1,467 @@
 ---
-title: "Gestational Diabetes Risk Prediction"
-subtitle: "CIS 690  Statistical Inference Packages"
-author: "Group 3: Manav, Davis, Daniela, Abenezer"
+title: "CIS 690 GDM Prediction Project"
+author: "Group Members: Abenezer Ghiday, Daniela Ortega, Davis Reinhard, Manav Mendonca"
 date: "Jun, 2026"
 output: word_document
 ---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# 2a: Load and Inspect
+
+```{r load}
+# Load the dataset
+patients <- read.csv("C:/Group Project/patients.csv")
+
+# View first few rows
+head(patients)
+
+# Check structure and dimensions
+str(patients)
+dim(patients)
+```
+
+# 2b: Summary Statistics
+
+```{r summary}
+# Summary statistics for all variables
+summary(patients)
+
+# Standard deviation for each variable
+sapply(patients, sd)
+```
+
+Pregnancies: Mean = 3.85, Median = 3, SD = 3.37, Q1 = 1, Q3 = 6, Range = 0 to 17. The distribution is right skewed given the gap between the mean and median. Zero pregnancies is a valid value here since it simply means no prior pregnancies.
+
+Glucose: Mean = 120.9, Median = 117, SD = 31.97, Q1 = 99, Q3 = 140.25, Range = 0 to 199. The mean and median are close together suggesting a fairly symmetric distribution. The minimum of zero is not clinically possible and will be treated as missing.
+
+BloodPressure: Mean = 69.11, Median = 72, SD = 19.36, Q1 = 62, Q3 = 80, Range = 0 to 122. Values are centered around a normal diastolic range of 62 to 80. The minimum of zero is not a valid blood pressure reading and will be treated as missing.
+
+SkinThickness: Mean = 20.54, Median = 23, SD = 15.95, Q1 = 0, Q3 = 32, Range = 0 to 99. The first quartile being zero tells us that at least 25% of the values are zero, which confirms the high level of missingness at 29.6% of the data.
+
+Insulin: Mean = 79.8, Median = 30.5, SD = 115.24, Q1 = 0, Q3 = 127.25, Range = 0 to 846. The large gap between mean and median and the extremely high SD indicate a heavily right skewed distribution with extreme outliers. The first quartile of zero confirms that more than 25% of values are zero, making this the most problematic variable with 48.7% missing.
+
+BMI: Mean = 31.99, Median = 32, SD = 7.88, Q1 = 27.3, Q3 = 36.6, Range = 0 to 67.1. The mean and median are nearly identical suggesting a symmetric distribution. The minimum of zero is not clinically possible and will be treated as missing.
+
+Pedigree: Mean = 0.47, Median = 0.37, SD = 0.33, Q1 = 0.24, Q3 = 0.63, Range = 0.08 to 2.42. Right skewed with most values concentrated below 1.0. No zeros or missing values.
+
+Age: Mean = 33.24, Median = 29, SD = 11.76, Q1 = 24, Q3 = 41, Range = 21 to 81. Right skewed with most patients in their late twenties to early thirties. No zeros or missing values.
+
+Diagnosis: Mean = 0.349 confirms the class distribution with approximately 35% of patients having a GDM diagnosis and 65% not.
+
+The most immediate concern from these statistics is the zero values in Glucose, BloodPressure, SkinThickness, Insulin, and BMI. Insulin is the most problematic with a first quartile of zero, a mean far above the median, and an SD of 115 indicating extreme variability. These zeros are not real measurements and will be addressed in step 2d.
+
+# 2c: Visualization, used full raw data for exploration
+
+```{r ggplot}
+library(ggplot2)
+```
+
+## Plot 1: Class Distribution
+
+```{r plot1}
+ggplot(patients, aes(x = factor(Diagnosis), fill = factor(Diagnosis))) +
+  geom_bar(width = 0.5) +
+  scale_x_discrete(labels = c("0" = "No GDM", "1" = "GDM")) +
+  scale_fill_manual(values = c("steelblue", "tomato"),
+                    labels = c("No GDM", "GDM"),
+                    name   = "Diagnosis") +
+  labs(title = "Class Distribution: GDM vs No GDM",
+       x = "Diagnosis", y = "Count") +
+  theme_minimal()
+```
+
+The bar chart displays the number of patients in each diagnosis category. The No GDM group contains approximately 500 patients, while the GDM group contains approximately 268 patients. This indicates that the dataset contains more patients without gestational diabetes than patients with gestational diabetes, suggesting a moderate class imbalance that should be considered during model development and evaluation. The visualization was created using the raw dataset before any preprocessing or balancing techniques were applied.
+
+## Plot 2: Glucose Distribution by Diagnosis
+
+```{r plot2}
+ggplot(patients, aes(x = Glucose, fill = factor(Diagnosis))) +
+  geom_histogram(bins = 30, alpha = 0.6, position = "identity") +
+  scale_fill_manual(values = c("steelblue", "tomato"),
+                    labels = c("No GDM", "GDM"),
+                    name   = "Diagnosis") +
+  labs(title = "Glucose Distribution by Diagnosis",
+       x = "Glucose (mg/dL)", y = "Count") +
+  theme_minimal()
+```
+
+The histogram shows that patients diagnosed with GDM generally have higher glucose levels than patients in the No GDM group. The GDM distribution is shifted to the right, with a larger concentration of observations above 140 mg/dL, while the No GDM group is concentrated around lower glucose values. Although there is some overlap between the two groups, the separation between the distributions suggests that glucose is likely an important predictor of gestational diabetes in this dataset. The visualization also reveals a few glucose values of zero, which are not clinically realistic and will be treated as missing values during data preparation.
+
+## Plot 3: BMI Distribution by Diagnosis
+
+```{r plot3}
+ggplot(patients, aes(x = BMI, fill = factor(Diagnosis))) +
+  geom_histogram(bins = 30, alpha = 0.6, position = "identity") +
+  scale_fill_manual(values = c("steelblue", "tomato"),
+                    labels = c("No GDM", "GDM"),
+                    name   = "Diagnosis") +
+  labs(title = "BMI Distribution by Diagnosis",
+       x = "BMI", y = "Count") +
+  theme_minimal()
+```
+
+The histogram shows that patients diagnosed with GDM tend to have higher BMI values than patients in the No GDM group. The GDM distribution is shifted slightly to the right, indicating that higher BMI may be associated with an increased risk of gestational diabetes. However, there is considerable overlap between the two groups, suggesting that BMI alone is not sufficient to distinguish between GDM and No GDM cases. The visualization also shows a few BMI values of zero, which are not clinically realistic and will be treated as missing values during data preparation.
+
+## Plot 4: Boxplots of Key Predictors by Diagnosis
+
+```{r plot4}
+ggplot(patients, aes(x = factor(Diagnosis), y = Glucose,
+                     fill = factor(Diagnosis))) +
+  geom_boxplot(alpha = 0.7) +
+  scale_x_discrete(labels = c("0" = "No GDM", "1" = "GDM")) +
+  scale_fill_manual(values = c("steelblue", "tomato"),
+                    name   = "Diagnosis") +
+  labs(title = "Glucose by Diagnosis",
+       x = "Diagnosis", y = "Glucose (mg/dL)") +
+  theme_minimal()
+
+ggplot(patients, aes(x = factor(Diagnosis), y = BMI,
+                     fill = factor(Diagnosis))) +
+  geom_boxplot(alpha = 0.7) +
+  scale_x_discrete(labels = c("0" = "No GDM", "1" = "GDM")) +
+  scale_fill_manual(values = c("steelblue", "tomato"),
+                    name   = "Diagnosis") +
+  labs(title = "BMI by Diagnosis",
+       x = "Diagnosis", y = "BMI") +
+  theme_minimal()
+
+ggplot(patients, aes(x = factor(Diagnosis), y = Age,
+                     fill = factor(Diagnosis))) +
+  geom_boxplot(alpha = 0.7) +
+  scale_x_discrete(labels = c("0" = "No GDM", "1" = "GDM")) +
+  scale_fill_manual(values = c("steelblue", "tomato"),
+                    name   = "Diagnosis") +
+  labs(title = "Age by Diagnosis",
+       x = "Diagnosis", y = "Age (years)") +
+  theme_minimal()
+
+ggplot(patients, aes(x = factor(Diagnosis), y = Pedigree,
+                     fill = factor(Diagnosis))) +
+  geom_boxplot(alpha = 0.7) +
+  scale_x_discrete(labels = c("0" = "No GDM", "1" = "GDM")) +
+  scale_fill_manual(values = c("steelblue", "tomato"),
+                    name   = "Diagnosis") +
+  labs(title = "Pedigree by Diagnosis",
+       x = "Diagnosis", y = "Pedigree") +
+  theme_minimal()
+```
+
+GDM patients show higher median values for Glucose, BMI, Age, and Pedigree compared to No GDM patients. Glucose shows the clearest separation between groups with the GDM median noticeably higher. BMI and Age also show differences but with more overlap. Pedigree, which represents family history related diabetes risk, is also higher in the GDM group, consistent with Zhang et al. [4] and Lee et al. [9] who identified family history as a key predictor.
+
+## Plot 5: Age vs Glucose Scatterplot by Diagnosis
+
+```{r plot5}
+ggplot(patients, aes(x = Age, y = Glucose,
+                     color = factor(Diagnosis))) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("steelblue", "tomato"),
+                     labels = c("No GDM", "GDM"),
+                     name   = "Diagnosis") +
+  labs(title = "Age vs Glucose by Diagnosis",
+       x = "Age (years)", y = "Glucose (mg/dL)") +
+  theme_minimal()
+```
+
+The scatterplot shows the relationship between age and glucose levels for patients with and without gestational diabetes. Patients diagnosed with GDM tend to have higher glucose values across most age groups, while patients without GDM are more concentrated at lower glucose levels. There does not appear to be a strong linear relationship between age and glucose, but glucose levels seem to be more useful than age for distinguishing between the two diagnosis groups. A few glucose values of zero are also present and will be treated as missing values during data preparation.
+
+# 2d: Missing Value Analysis
+
+## Step 1: Check for NA values and Zero values
+
+```{r check}
+# Check for actual NA values first
+colSums(is.na(patients))
+
+# Check zero counts per variable
+colSums(patients == 0)
+```
+
+No variables contain NA values. However Glucose, BloodPressure, SkinThickness, Insulin, and BMI contain zeros that are not physiologically possible. These are treated as missing data. Pregnancies and Diagnosis zeros are valid and left unchanged. Pedigree and Age have no zeros and no missing values.
+
+## Step 2: Replace invalid zeros with NA
+
+```{r replace-zeros}
+# Replace zeros with NA only in variables where zero is not valid
+patients_clean    <- patients
+invalid_zero_vars <- c("Glucose", "BloodPressure", "SkinThickness",
+                       "Insulin", "BMI")
+
+patients_clean[invalid_zero_vars] <- lapply(
+  patients_clean[invalid_zero_vars],
+  function(x) ifelse(x == 0, NA, x)
+)
+
+# Confirm missing values after replacement
+colSums(is.na(patients_clean))
+```
+
+After replacing invalid zeros with NA, five variables now show missing values. Insulin has the highest missingness with 374 missing values followed by SkinThickness with 227. BloodPressure has 35 missing values, BMI has 11, and Glucose has only 5. Pregnancies and Diagnosis zeros were left unchanged since they represent valid clinical values. Pedigree and Age remain complete with no missing values.
+
+## Step 3: Split the data BEFORE imputation to prevent data leakage
+
+```{r split}
+# Split must happen before imputation
+# Any median calculated after splitting uses training data only
+# This prevents test data from influencing the imputation process
+# Split the data 70/30
+# 70% training gives the model enough data to learn from
+# 30% testing gives a more reliable evaluation with this small dataset
+
+set.seed(123)
+
+n         <- nrow(patients_clean)
+train_idx <- sample(seq_len(n), size = floor(0.70 * n))
+
+train_data <- patients_clean[ train_idx, ]
+test_data  <- patients_clean[-train_idx, ]
+
+cat("Training set:", nrow(train_data), "observations\n")
+cat("Testing set: ", nrow(test_data),  "observations\n")
+
+cat("\nTraining class distribution:\n")
+table(train_data$Diagnosis)
+
+cat("\nTesting class distribution:\n")
+table(test_data$Diagnosis)
+```
+
+The dataset was split into 70% training (537 observations) and 30% testing (231 observations). A 70/30 split was chosen over 80/20 because the dataset only contains 768 observations. With 80/20 the test set would have contained only around 54 positive GDM cases which is too small to produce reliable sensitivity and recall estimates. The 70/30 split gives 81 positive GDM cases in the test set which provides a more stable evaluation of model performance on unseen data. The class distribution is well preserved in both sets with roughly 65% No GDM and 35% GDM in both training and testing, confirming the split was done correctly.
+
+## Step 4: Calculate medians from training data only
+
+```{r medians}
+# Calculate median from training data only
+# na.rm = TRUE ensures the invalid zeros already replaced with NA
+# are excluded so the median only uses real observed clinical values
+
+glucose_median <- median(train_data$Glucose,       na.rm = TRUE)
+bp_median      <- median(train_data$BloodPressure, na.rm = TRUE)
+bmi_median     <- median(train_data$BMI,           na.rm = TRUE)
+skin_median    <- median(train_data$SkinThickness, na.rm = TRUE)
+insulin_median <- median(train_data$Insulin,       na.rm = TRUE)
+
+cat("Training medians used for imputation:\n")
+cat("Glucose:       ", glucose_median,  "\n")
+cat("BloodPressure: ", bp_median,       "\n")
+cat("BMI:           ", bmi_median,      "\n")
+cat("SkinThickness: ", skin_median,     "\n")
+cat("Insulin:       ", insulin_median,  "\n")
+```
+
+Median values were calculated from the training data only. Glucose median of 119 mg/dL falls within the normal to mildly elevated range expected for a pregnant population being screened for GDM. BloodPressure median of 72 mmHg is consistent with a normal diastolic reading. BMI median of 32 falls in the obese range which is expected given this population. SkinThickness median of 29 mm and Insulin median of 125 mu U/ml are both within plausible clinical ranges. These medians were then applied to both the training and test sets to fill in the missing values. Using training medians for the test set ensures no information from the test data influences the imputation process, which prevents data leakage as highlighted by Netayawijit et al. [16].
+
+## Step 5: Apply those same medians to both training and test data
+
+```{r impute}
+# Apply imputation to training data first
+train_data$Glucose <- ifelse(is.na(train_data$Glucose),
+                             glucose_median, train_data$Glucose)
+
+train_data$BloodPressure <- ifelse(is.na(train_data$BloodPressure),
+                                   bp_median, train_data$BloodPressure)
+
+train_data$BMI <- ifelse(is.na(train_data$BMI),
+                         bmi_median, train_data$BMI)
+
+train_data$SkinThickness <- ifelse(is.na(train_data$SkinThickness),
+                                   skin_median, train_data$SkinThickness)
+
+train_data$Insulin <- ifelse(is.na(train_data$Insulin),
+                             insulin_median, train_data$Insulin)
+
+# Apply the exact same training medians to test data
+# The test data never influences what values are used
+test_data$Glucose <- ifelse(is.na(test_data$Glucose),
+                            glucose_median, test_data$Glucose)
+
+test_data$BloodPressure <- ifelse(is.na(test_data$BloodPressure),
+                                  bp_median, test_data$BloodPressure)
+
+test_data$BMI <- ifelse(is.na(test_data$BMI),
+                        bmi_median, test_data$BMI)
+
+test_data$SkinThickness <- ifelse(is.na(test_data$SkinThickness),
+                                  skin_median, test_data$SkinThickness)
+
+test_data$Insulin <- ifelse(is.na(test_data$Insulin),
+                            insulin_median, test_data$Insulin)
+
+# Confirm no missing values remain in either set
+cat("Missing in training after imputation:\n")
+colSums(is.na(train_data))
+
+cat("\nMissing in test after imputation:\n")
+colSums(is.na(test_data))
+```
+
+After imputation both the training and test sets now have zero missing values across all nine variables. The medians were calculated from the training set only and then applied to both sets. This is important because if the medians had been calculated from the full dataset before splitting, the test data would have quietly influenced the imputation values which is a form of data leakage. By splitting first and imputing second the test set stays completely untouched and gives an honest picture of how the model will actually perform on new patients.
+
+# 2e: Outlier Detection and Handling
+
+## Detect Outliers
+
+```{r detect-outliers}
+# Function to count outliers using IQR rule
+detect_outliers <- function(x) {
+  Q1  <- quantile(x, 0.25, na.rm = TRUE)
+  Q3  <- quantile(x, 0.75, na.rm = TRUE)
+  IQR <- Q3 - Q1
+  sum(x < (Q1 - 1.5 * IQR) | x > (Q3 + 1.5 * IQR), na.rm = TRUE)
+}
+
+# Count outliers in training data
+cat("Outlier counts in training data:\n")
+sapply(train_data, detect_outliers)
+```
+
+The IQR rule identified outliers in seven of the nine variables. Insulin has the most with 237 outliers, which is consistent with its heavily skewed distribution and extreme values seen in the summary statistics. SkinThickness follows with 39 outliers. Glucose and Diagnosis show no outliers. These outliers will be addressed using capping at the 1st and 99th percentile calculated from the training data only.
+
+## Visualize Outliers Before Capping
+
+```{r outlier-plots}
+# Insulin
+ggplot(train_data, aes(x = factor(Diagnosis), y = Insulin,
+                       fill = factor(Diagnosis))) +
+  geom_boxplot(outlier.color = "red", outlier.size = 1.5, alpha = 0.7) +
+  scale_x_discrete(labels = c("0" = "No GDM", "1" = "GDM")) +
+  scale_fill_manual(values = c("steelblue", "tomato"),
+                    name   = "Diagnosis") +
+  labs(title    = "Insulin Outliers Before Capping",
+       subtitle = "Red dots are flagged by the IQR rule",
+       x = "Diagnosis", y = "Insulin") +
+  theme_minimal()
+
+# SkinThickness
+ggplot(train_data, aes(x = factor(Diagnosis), y = SkinThickness,
+                       fill = factor(Diagnosis))) +
+  geom_boxplot(outlier.color = "red", outlier.size = 1.5, alpha = 0.7) +
+  scale_x_discrete(labels = c("0" = "No GDM", "1" = "GDM")) +
+  scale_fill_manual(values = c("steelblue", "tomato"),
+                    name   = "Diagnosis") +
+  labs(title    = "SkinThickness Outliers Before Capping",
+       subtitle = "Red dots are flagged by the IQR rule",
+       x = "Diagnosis", y = "SkinThickness") +
+  theme_minimal()
+
+# Pedigree
+ggplot(train_data, aes(x = factor(Diagnosis), y = Pedigree,
+                       fill = factor(Diagnosis))) +
+  geom_boxplot(outlier.color = "red", outlier.size = 1.5, alpha = 0.7) +
+  scale_x_discrete(labels = c("0" = "No GDM", "1" = "GDM")) +
+  scale_fill_manual(values = c("steelblue", "tomato"),
+                    name   = "Diagnosis") +
+  labs(title    = "Pedigree Outliers Before Capping",
+       subtitle = "Red dots are flagged by the IQR rule",
+       x = "Diagnosis", y = "Pedigree") +
+  theme_minimal()
+
+# Age
+ggplot(train_data, aes(x = factor(Diagnosis), y = Age,
+                       fill = factor(Diagnosis))) +
+  geom_boxplot(outlier.color = "red", outlier.size = 1.5, alpha = 0.7) +
+  scale_x_discrete(labels = c("0" = "No GDM", "1" = "GDM")) +
+  scale_fill_manual(values = c("steelblue", "tomato"),
+                    name   = "Diagnosis") +
+  labs(title    = "Age Outliers Before Capping",
+       subtitle = "Red dots are flagged by the IQR rule",
+       x = "Diagnosis", y = "Age") +
+  theme_minimal()
+
+# BloodPressure
+ggplot(train_data, aes(x = factor(Diagnosis), y = BloodPressure,
+                       fill = factor(Diagnosis))) +
+  geom_boxplot(outlier.color = "red", outlier.size = 1.5, alpha = 0.7) +
+  scale_x_discrete(labels = c("0" = "No GDM", "1" = "GDM")) +
+  scale_fill_manual(values = c("steelblue", "tomato"),
+                    name   = "Diagnosis") +
+  labs(title    = "BloodPressure Outliers Before Capping",
+       subtitle = "Red dots are flagged by the IQR rule",
+       x = "Diagnosis", y = "BloodPressure") +
+  theme_minimal()
+
+# BMI
+ggplot(train_data, aes(x = factor(Diagnosis), y = BMI,
+                       fill = factor(Diagnosis))) +
+  geom_boxplot(outlier.color = "red", outlier.size = 1.5, alpha = 0.7) +
+  scale_x_discrete(labels = c("0" = "No GDM", "1" = "GDM")) +
+  scale_fill_manual(values = c("steelblue", "tomato"),
+                    name   = "Diagnosis") +
+  labs(title    = "BMI Outliers Before Capping",
+       subtitle = "Red dots are flagged by the IQR rule",
+       x = "Diagnosis", y = "BMI") +
+  theme_minimal()
+
+# Pregnancies
+ggplot(train_data, aes(x = factor(Diagnosis), y = Pregnancies,
+                       fill = factor(Diagnosis))) +
+  geom_boxplot(outlier.color = "red", outlier.size = 1.5, alpha = 0.7) +
+  scale_x_discrete(labels = c("0" = "No GDM", "1" = "GDM")) +
+  scale_fill_manual(values = c("steelblue", "tomato"),
+                    name   = "Diagnosis") +
+  labs(title    = "Pregnancies Outliers Before Capping",
+       subtitle = "Red dots are flagged by the IQR rule",
+       x = "Diagnosis", y = "Pregnancies") +
+  theme_minimal()
+```
+
+## Cap Outliers Using 1st and 99th Percentile
+
+```{r capping}
+# Calculate cap values from training data only
+numeric_vars <- names(train_data)[names(train_data) != "Diagnosis"]
+
+cap_lower <- sapply(train_data[numeric_vars],
+                    function(x) quantile(x, 0.01, na.rm = TRUE))
+cap_upper <- sapply(train_data[numeric_vars],
+                    function(x) quantile(x, 0.99, na.rm = TRUE))
+
+# Apply capping to training data
+for (var in numeric_vars) {
+  train_data[[var]] <- pmax(pmin(train_data[[var]],
+                                 cap_upper[var]),
+                            cap_lower[var])
+}
+
+# Apply same cap values to test data
+for (var in numeric_vars) {
+  test_data[[var]] <- pmax(pmin(test_data[[var]],
+                                cap_upper[var]),
+                           cap_lower[var])
+}
+
+# Confirm outlier counts dropped after capping
+cat("Outlier counts in training data after capping:\n")
+sapply(train_data, detect_outliers)
+
+# Verify that the same cap boundaries from training were correctly applied
+# to the test data as well. Both sets should show zero outliers after capping.
+# If the test data showed different counts it would signal something went wrong.
+cat("Outlier counts in test data after capping:\n")
+sapply(test_data, detect_outliers)
+```
+
+After capping at the 1st and 99th percentile, both the training and test sets show zero outliers across all nine variables. In the training data, Insulin had the most reduction going from 237 outliers down to zero, followed by SkinThickness from 39 and Pedigree from 20. The test data confirms the same result with zero outliers across all variables, meaning the cap boundaries from the training data were correctly applied to both sets. All 537 training observations and 231 test observations are preserved since capping adjusts extreme values rather than removing rows.
+
+
+#Step 3: Feature Selection and Data Processing
+# Correlation of each predictor with Diagnosis
+```{r}
+numeric_data  <- train_data[sapply(train_data, is.numeric)]
+cor_matrix    <- cor(numeric_data, use = "pairwise.complete.obs")
+
+cor_with_diag <- data.frame(
+  Variable    = rownames(cor_matrix),
+  Correlation = round(cor_matrix[, "Diagnosis"], 3)
+)
+
+# Remove Diagnosis from the list
+cor_with_diag <- cor_with_diag[cor_with_diag$Variable != "Diagnosis", ]
+
+# Sort by absolute correlation
+cor_with_diag <- cor_with_diag[order(abs(cor_with_diag$Correlation),
+                                      decreasing = TRUE), ]
+print(cor_with_diag)
+```
