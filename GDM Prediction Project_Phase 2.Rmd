@@ -1,0 +1,421 @@
+---
+title: "Gestational Diabetes Risk Prediction"
+author: "Abenezer, Daniela, Davis, Manav"
+date: "2026-06-11"
+output: word_document
+---
+
+# Step 2: Data Exploration and Preparation
+
+## Step 2a: Load and Inspect Data
+
+```{r}
+#Load ggplot2 for visualizations
+library(ggplot2)
+
+#Load in dataset
+patients <- read.csv("patients.csv")
+
+summary(patients)
+dim(patients)
+names(patients)
+str(patients)
+head(patients)
+```
+
+Dataset contains 768 observations and 9 variables. The variables include: Pregnancies, Glucose, BloodPressure, SkinThickness, Insulin, BMI, Pedigree, Age, and Diagnosis.
+
+Structure of the data is primarily numerical (helpful for our analysis, not much manipuation required from that standpoint). Diagnosis would be our response variable and it's coded as 0 and 1 (1 = positive, 0 = no diagnosis). Since this is a binary outcome, this supports the use of logistic regression later in the project, which is also commonly used in the literature for GDM prediction [2], [4].
+
+```{r}
+#Diagnosis counts in the dataset
+table(patients$Diagnosis)
+
+#Diagnosis percentages
+prop.table(table(patients$Diagnosis)) * 100
+```
+
+500 patients were not diagnosed with GDM and 268 patients were diagnosed with GDM. This means approximately 65.1% of the dataset is in the no-GDM group and 34.9% is in the GDM group. This is not an extreme imbalance, but it is still important because the model may become better at predicting the majority class. Because of this, later model evaluation should not rely only on accuracy. Measures such as sensitivity, recall, specificity, precision, F1-score, and ROC-AUC will be important because this is a clinical screening problem where missing higher-risk patients would be a concern [4], [5].
+
+```{r}
+#Missing values
+colSums(is.na(patients))
+
+#Zero values in each column
+colSums(patients == 0)
+```
+
+We identified 0 values in this dataset via this step. While for some variables, this may be ok, zeros in Glucose, BloodPressure, SkinThickness, Insulin, and BMI are not realistically possible. These values most likely represent missing or invalid measurements rather than true zeros. This is important because the literature identifies a few of these variables (glucose, BMI, and blood pressure) as clinically meaningful predictors of GDM [4], [9].
+
+```{r}
+#Variables where zero is likely invalid
+zero_vars <- c("Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI")
+
+zero_counts <- colSums(patients[zero_vars] == 0)
+zero_percent <- round((zero_counts / nrow(patients)) * 100, 2)
+
+zero_summary <- data.frame(
+  Variable = zero_vars,
+  Zero_Count = as.numeric(zero_counts),
+  Zero_Percent = as.numeric(zero_percent)
+)
+
+zero_summary
+```
+
+Created zero-value summary to show zero distribution within important vairables. Glucose had 5 zero values, BloodPressure had 35, BMI had 11, SkinThickness had 227, and Insulin had 374. Zero values in Glucose, BloodPressure, and BMI have low 0s - we couls likely be clean these through imputing data. SkinThickness and Insulin have much larger zero-value problems, especially Insulin, where nearly half of the values were zero. This means any later interpretation involving Insulin and SkinThickness should be treated cautiously.
+
+Per our lit review, Glucose, BMI, Age, Pedigree, Pregnancies, and BloodPressure are more consistently supported as GDM predictors, while Insulin and SkinThickness appear less consistently emphasized in the literature and also have more data-quality issues in this dataset [4], [9].
+
+## Step 2b: Summary Statistics
+
+```{r}
+#Summary statistics for each variable
+stats_table <- data.frame(
+  Variable = names(patients),
+  Mean = sapply(patients, mean),
+  Median = sapply(patients, median),
+  SD = sapply(patients, sd),
+  Min = sapply(patients, min),
+  Q1 = sapply(patients, function(x) quantile(x, 0.25)),
+  Q3 = sapply(patients, function(x) quantile(x, 0.75)),
+  Max = sapply(patients, max)
+)
+
+stats_table
+```
+
+Some of the values in the summary stats data frame were reasonable (e.g. Age ranging from 21 to 81 and number of Pregnancies ranging from 0 to 17). Minimum values of 0 for Glucose, BloodPressure, SkinThickness, Insulin, and BMI confirmed the data-quality issue found earlier.Summary also showed  Insulin and SkinThickness had unusual distributions. For SkinThickness, the first quartile was 0 in the raw data, and for Insulin, the first quartile was also 0. This suggests that the zero values are not just a few random errors but a major issue for those two variables. Because of this, they should not be treated the same way as cleaner variables like Age or Pedigree.
+
+```{r}
+#Mean values by diagnosis group
+aggregate(
+  cbind(Pregnancies, Glucose, BloodPressure, SkinThickness,
+        Insulin, BMI, Pedigree, Age) ~ Diagnosis,
+  data = patients,
+  FUN = mean
+)
+```
+
+GDM group has higher average Glucose, BMI, Age, Pedigree, and more Pregnancies compared with the non-GDM group. Matches literature review (glucose measures, BMI, maternal age, family history or genetic predisposition, pregnancy history, and blood-pressure-related factors as important predictors of GDM) [4], [9].
+
+The strongest difference appeared in Glucose, which makes sense because GDM is directly related to abnormal glucose regulation. BMI and Age were also higher in the diagnosed group, which supports the literature showing that metabolic risk and maternal age are important factors in GDM prediction [4], [9].
+
+## Step 2c: Visualization
+
+```{r}
+#Create diagnosis label for clearer plots
+patients$DiagnosisLabel <- factor(
+  patients$Diagnosis,
+  levels = c(0, 1),
+  labels = c("No GDM", "GDM")
+)
+
+#Distribution of diagnoses
+ggplot(patients, aes(x = DiagnosisLabel)) +
+  geom_bar() +
+  labs(
+    title = "Distribution of Gestational Diabetes Diagnosis",
+    x = "Diagnosis",
+    y = "Count"
+  )
+```
+
+The diagnosis distribution plot showed that the dataset has more patients without GDM than with GDM (supports earlier frequency table and confirms that the outcome is moderately imbalanced). Important because model could appear accurate by mostly predicting the majority class. As such, our ;later evaluation should include recall/sensitivity and other classification metrics rather than accuracy alone [4], [5].
+
+```{r}
+#Glucose levels by diagnosis
+ggplot(patients, aes(x = DiagnosisLabel, y = Glucose)) +
+  geom_boxplot() +
+  labs(
+    title = "Glucose by Diagnosis",
+    x = "Diagnosis",
+    y = "Glucose"
+  )
+```
+
+Glucose boxplot showed that the GDM group had higher glucose values than the no-GDM group. Glucose-related measures are consistently identified as some of the most important predictors in GDM prediction models [4], [5]. The zero values should be treated as missing or invalid before modeling.
+
+```{r}
+#BMI by diagnosis
+ggplot(patients, aes(x = DiagnosisLabel, y = BMI)) +
+  geom_boxplot() +
+  labs(
+    title = "BMI by Diagnosis",
+    x = "Diagnosis",
+    y = "BMI"
+  )
+```
+
+BMI boxplot showed that the GDM group generally had a higher BMI than the no-GDM group (consistent with the literature, which identifies BMI as one of the most common and important predictors of GDM risk [4], [9]). Higher BMI is clinically relevant because it is associated with insulin resistance and broader metabolic risk. Zero vals here should also be treated as missing.
+
+```{r}
+#Age by diagnosis
+ggplot(patients, aes(x = DiagnosisLabel, y = Age)) +
+  geom_boxplot() +
+  labs(
+    title = "Age by Diagnosis",
+    x = "Diagnosis",
+    y = "Age"
+  )
+```
+
+Age boxplot showed patients in the GDM group tended to be older vs no-GDM group (matches lit review [4],[9]). There were also some high-age values in the dataset. Since the project frames the data as a pregnancy dataset, these high ages should be interpreted cautiously. Rather than removing them immediately, they might need to be flagged as a dataset limitation unless there is a clear reason to treat them as data-entry errors.
+
+```{r}
+#Glucose vs BMI
+ggplot(patients, aes(x = BMI, y = Glucose, color = DiagnosisLabel)) +
+  geom_point(alpha = 0.7) +
+  labs(
+    title = "Glucose vs BMI by Diagnosis",
+    x = "BMI",
+    y = "Glucose",
+    color = "Diagnosis"
+  )
+```
+
+The Glucose vs. BMI scatterplot showed that many GDM cases cluster toward higher glucose and higher BMI values. This supports the literature-informed expectation that both glucose and BMI are important predictors of GDM [4], [9]. The plot also made the invalid zero problem visible, especially where some points appeared at BMI = 0 or Glucose = 0. This helped confirm that the data needed to be cleaned before feature selection or modeling.
+
+## Step 2d: Missing Value Analysis and Imputation
+
+```{r}
+#Clean dataset of patients
+patients_clean <- patients
+
+#Change the 0s to NAs
+patients_clean[zero_vars] <- lapply(
+  patients_clean[zero_vars],
+  function(x) { ifelse(x == 0, NA, x) }
+)
+
+#Check missing values after recoding the 0s
+colSums(is.na(patients_clean))
+```
+
+Changed zeros to `NA` for Glucose, BloodPressure, SkinThickness, Insulin, and BMI per earlier notes. If these impossible zeros were left in the dataset, they could distort summary statistics, visualizations, correlations, and model results.
+
+```{r}
+#Calculate median values using only valid/non-missing values
+imputation_medians <- sapply(patients_clean[zero_vars], median, na.rm = TRUE)
+
+imputation_medians
+```
+
+The median was calculated for each variable using only valid non-missing values. Median imputation was selected because it is simple and less sensitive to extreme values than mean imputation.
+
+```{r}
+#Create median-imputed dataset
+patients_imputed <- patients_clean
+
+for (var in zero_vars) {
+  patients_imputed[[var]][is.na(patients_imputed[[var]])] <- imputation_medians[var]
+}
+
+colSums(is.na(patients_imputed))
+
+summary(patients_imputed)
+```
+
+Median imputation would probably make more sense for Glucose, BloodPressure, and BMI because these variables had relatively low zeros. SkinThickness had 227 invalid zero values and Insulin had 374, meaning a large portion of those variables had to be imputed. Because of this, any findings involving SkinThickness and Insulin should be handled cautiously. We could later consider comparing a core model without these variables to a full model that includes them.
+
+```{r}
+#Remove the diagnosis label to help with modeling later
+patients_model <- patients_imputed[, c(
+  "Pregnancies", "Glucose", "BloodPressure",
+  "SkinThickness", "Insulin", "BMI",
+  "Pedigree", "Age", "Diagnosis"
+)]
+```
+
+## Step 2e: Outlier Detection and Handling
+
+```{r}
+predictor_vars <- c(
+  "Pregnancies", "Glucose", "BloodPressure", "SkinThickness",
+  "Insulin", "BMI", "Pedigree", "Age"
+)
+
+#Function to calculate IQR outlier bounds and counts using 1.5 rule
+get_outlier_info <- function(x) {
+  q1 <- quantile(x, 0.25)
+  q3 <- quantile(x, 0.75)
+  iqr <- q3 - q1
+  lower <- q1 - 1.5 * iqr
+  upper <- q3 + 1.5 * iqr
+  
+  outliers <- x < lower | x > upper
+  
+  return(c(
+    Q1 = q1,
+    Q3 = q3,
+    IQR = iqr,
+    Lower_Bound = lower,
+    Upper_Bound = upper,
+    Min = min(x),
+    Max = max(x),
+    Outlier_Count = sum(outliers),
+    Outlier_Percent = mean(outliers) * 100
+  ))
+}
+
+#Apply function to all predictors
+outlier_summary <- t(sapply(patients_model[predictor_vars], get_outlier_info))
+
+#Round results
+outlier_summary <- round(outlier_summary, 2)
+
+outlier_summary
+```
+
+Outliers were identified using the 1.5 × IQR rule. Results showed Glucose had no outliers after the missing zero values were imputed. Several variables had smaller numbers of outliers, including Pregnancies, BloodPressure, BMI, Pedigree, and Age. These were reasonable candidates for capping because the goal was to reduce the influence of extreme values without deleting rows. SkinThickness and Insulin were different. They showed much higher numbers of outliers, especially Insulin. This was likely influenced by the earlier imputation step, because almost half of the Insulin values were originally zero and then replaced with the median. That made the middle of the Insulin distribution very narrow, which caused many real non-median values to be flagged as outliers. Because of this, Insulin should not be capped blindly.
+
+```{r}
+#Cap outliers for selected variables
+patients_capped <- patients_model
+
+#Variables we will cap using IQR
+cap_vars <- c("Pregnancies", "BloodPressure", "BMI", "Pedigree", "Age")
+
+#Function to cap values using IQR rule
+cap_iqr <- function(x) {
+  q1 <- quantile(x, 0.25)
+  q3 <- quantile(x, 0.75)
+  iqr <- q3 - q1
+  
+  lower <- q1 - 1.5 * iqr
+  upper <- q3 + 1.5 * iqr
+  
+  x[x < lower] <- lower
+  x[x > upper] <- upper
+  
+  return(x)
+}
+
+#Apply capping only to selected variables
+patients_capped[cap_vars] <- lapply(patients_capped[cap_vars], cap_iqr)
+
+#Compare before and after summaries
+summary(patients_model[cap_vars])
+summary(patients_capped[cap_vars])
+```
+
+Outliers were capped for Pregnancies, BloodPressure, BMI, Pedigree, and Age. Capping was selected instead of row removal because the dataset is quite small, and removing observations could reduce the amount of data available for modeling. Glucose was not capped because it had no IQR-defined outliers. Insulin and SkinThickness were also not capped because their outlier results were strongly affected by zeros and imputation.
+
+```{r}
+outlier_summary_after <- t(sapply(patients_capped[predictor_vars], get_outlier_info))
+outlier_summary_after <- round(outlier_summary_after, 2)
+
+outlier_summary_after
+```
+
+After capping, Pregnancies, BloodPressure, BMI, Pedigree, and Age no longer had IQR-defined outliers. SkinThickness and Insulin still showed many outliers, but these were intentionally left unchanged because of the data-quality issues noted aboive.
+
+
+
+
+# Step 3: Feature Selection and Data Processing
+
+## Step 3a: Feature Selection
+
+```{r}
+#Predictor variables
+predictor_vars <- c("Pregnancies", "Glucose", "BloodPressure", "SkinThickness","Insulin", "BMI", "Pedigree", "Age")
+
+#Correlation matrix among predictors
+cor_matrix <- cor(patients_capped[predictor_vars])
+
+round(cor_matrix, 2)
+```
+
+Checking relationships between the predictor variables using correlation matrix to identify whether any variables are strongly related to each other before modeling. Strongest relationships were between `Pregnancies` and `Age`, `SkinThickness` and `BMI`, and `Insulin` and `Glucose`. These relationships make sense because pregnancy history may increase with age, while BMI, skin thickness, insulin, and glucose are all related to metabolic health.
+
+```{r}
+# Correlation of each predictor with Diagnosis
+cor_with_diagnosis <- cor(patients_capped[predictor_vars], patients_capped$Diagnosis)
+
+# Sort from strongest positive relationship to weakest
+sort(round(cor_with_diagnosis[,1], 3), decreasing = TRUE)
+```
+
+The correlation with `Diagnosis` showed that `Glucose` had the strongest relationship with GDM diagnosis. `BMI`, `Age`, `Pregnancies`, `SkinThickness`, `Insulin`, `Pedigree`, and `BloodPressure` followed after that. This mostly aligns with our literature review, where glucose, BMI, maternal age, family history or pedigree, pregnancy history, and blood-pressure-related factors were identified as important predictors of GDM [4], [9]. `SkinThickness` and `Insulin` showed some relationship with `Diagnosis`, but still needs to be interpreted carefully given zero value imputation in step 2.
+
+
+```{r}
+# Full logistic regression model with all predictors
+full_model <- glm(
+  Diagnosis ~ Pregnancies + Glucose + BloodPressure + SkinThickness +
+    Insulin + BMI + Pedigree + Age,
+  data = patients_capped,
+  family = binomial
+)
+
+summary(full_model)
+```
+
+A full logistic regression model was built using all predictors. Logistic regression is appropriate because `Diagnosis` is binary, and it is also commonly used as an interpretable baseline model in GDM prediction studies [2], [4].`Pregnancies`, `Glucose`, `BMI`, and `Pedigree` were statistically significant. `BloodPressure`, `SkinThickness`, `Insulin`, and `Age` were not significant after the other variables were included. This suggests that some variables may have weaker independent predictive value once stronger predictors like `Glucose` and `BMI` are already in the model.
+
+```{r}
+# Stepwise feature selection using AIC
+step_model <- step(full_model, direction = "both", trace = FALSE)
+
+summary(step_model)
+formula(step_model)
+```
+
+Final stepwise model selected `Pregnancies`, `Glucose`, `BMI`, and `Pedigree`. This result is easy to justify because these variables are also supported by the literature. Glucose, BMI, pregnancy history, and family history or genetic predisposition are commonly identified as important predictors of GDM [4], [9].
+
+```{r}
+# Odds ratios for easier interpretation
+exp(coef(step_model))
+```
+
+Odds ratios = more interpretable. In the stepwise model, higher values of `Pregnancies`, `Glucose`, `BMI`, and `Pedigree` were all associated with higher odds of GDM.
+
+```{r}
+# Core model to avoid heavy reliance on skin thickness and insulin
+core_model <- glm(Diagnosis ~ Pregnancies + Glucose + BloodPressure + BMI + Pedigree + Age, data = patients_capped, family = binomial)
+
+summary(core_model)
+exp(coef(core_model))
+```
+
+Also created a core model and excluded `SkinThickness` and `Insulin` given zero values and imputation earlier. Focused on `Pregnancies`, `Glucose`, `BloodPressure`, `BMI`, `Pedigree`, and `Age` [4], [9]. The results were similar to the stepwise model, which suggests that a simpler and more interpretable set of predictors may be reasonable for this dataset.
+
+## Step 3b: Standardization
+
+```{r}
+# Create standardized dataset
+patients_standardized <- patients_capped
+
+# Standardize predictor variables only
+patients_standardized[predictor_vars] <- scale(patients_standardized[predictor_vars])
+
+# Check standardized summaries
+summary(patients_standardized[predictor_vars])
+```
+
+The predictor variables were standardized so they would be on the same scale. This is useful because the variables are measured in very different units. For example, `Insulin` has much larger raw values than `Pedigree`.
+
+`Diagnosis` was not standardized because it is the binary response variable.
+
+```{r}
+# Check means and standard deviations after standardization
+standardization_check <- data.frame(
+  Variable = predictor_vars,
+  Mean = sapply(patients_standardized[predictor_vars], mean),
+  SD = sapply(patients_standardized[predictor_vars], sd)
+)
+
+standardization_check$Mean <- round(standardization_check$Mean, 3)
+standardization_check$SD <- round(standardization_check$SD, 3)
+
+standardization_check
+```
+
+The standardization check confirmed that each predictor had a mean close to 0 and a standard deviation of 1. This means the standardization worked correctly. Future use, standardization should ideally be done after splitting the data into training and testing sets. This helps avoid data leakage by making sure the test data is not used to define the scaling process.
+
+
+
+
+
+
