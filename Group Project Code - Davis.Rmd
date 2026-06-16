@@ -142,7 +142,7 @@ colSums(patients == 0)
 ```
 No variables contained values coded as NA. However, several variables contained values of zero that are likely invalid or represent missing measurements. Zeros for things like pregnancy and diagnosis are valid because they represent no prior pregnancies and no diagnosis. In contrast, zeros for glucose, blood pressure, skin thickness, insulin, and BMI are not realistic and are highly suspicious, so they should be treated as missing values for cleaning.
 
-```{r data-cleaning}
+```{r convert-to-na}
 patients_clean <- patients
 
 invalid_zero_vars <- c("Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI")
@@ -152,37 +152,93 @@ patients_clean[invalid_zero_vars] <- lapply(
   function(x) ifelse(x == 0, NA, x)
 )
 ```
+Converting 0s to NA. 
+
+```{r splitting-data}
+set.seed(130)
+
+train_index <- unlist(
+  tapply(
+    1:nrow(patients_clean),
+    patients_clean$Diagnosis,
+    function(x) sample(x, size = floor(0.70 * length(x)))
+  )
+)
+
+train_data <- patients_clean[train_index, ]
+test_data <- patients_clean[-train_index, ]
+
+nrow(train_data)
+nrow(test_data)
+
+table(train_data$Diagnosis)
+table(test_data$Diagnosis)
+```
+
+Here we are splitting the cleaned patient dataset into a 70/30 training and testing splits based on diagnosis so that both sets maintain a similar proportion of diagnosed to non-diagnosed patients.
+
 ```{r}
-colSums(is.na(patients_clean))
+colSums(is.na(train_data))
+colSums(is.na(test_data))
 ```
 ```{r}
+#define the function to compare median and regression imputation.
 compare_imputation_methods <- function(data, target_variable) {
   
-  set.seed(123)
+#using same seed
+  set.seed(130)
   
   predictor_vars <- c("Pregnancies", "Glucose", "BloodPressure", "BMI", "Pedigree", "Age")
+  
   predictor_vars <- predictor_vars[predictor_vars != target_variable]
   
-  observed_rows <- which(
-    !is.na(data[[target_variable]]) &
-      complete.cases(data[predictor_vars])
+#rows where the target variable is actually observed
+  observed_rows <- which(!is.na(data[[target_variable]]))
+  
+#temporarily hiding 30% of observed values for testing imputation accuracy
+  hide_rows <- sample(observed_rows, size = round(0.30 * length(observed_rows)))
+  
+#use the remaining observed rows to build the imputation models.
+  train_rows <- setdiff(observed_rows, hide_rows)
+  
+#temporary copy of the data for this comparison.
+  data_for_model <- data
+  
+#calculate predictor medians using only the comparison training rows.
+  predictor_medians <- sapply(
+    data_for_model[train_rows, predictor_vars],
+    function(x) median(x, na.rm = TRUE)
   )
   
-  hide_rows <- sample(observed_rows, size = round(0.30 * length(observed_rows)))
-  train_rows <- setdiff(observed_rows, hide_rows)
+#fill in missing predictor values with training medians.
+  for (var in predictor_vars) {
+    data_for_model[[var]][is.na(data_for_model[[var]])] <- predictor_medians[[var]]
+  }
   
   true_values <- data[[target_variable]][hide_rows]
   
+#median-imputed predictions.
   median_value <- median(data[[target_variable]][train_rows], na.rm = TRUE)
   median_predictions <- rep(median_value, length(hide_rows))
   
+#the regression formula for the target variable.
   regression_formula <- as.formula(
     paste(target_variable, "~", paste(predictor_vars, collapse = " + "))
   )
   
-  regression_model <- lm(regression_formula, data = data[train_rows, ])
-  regression_predictions <- predict(regression_model, newdata = data[hide_rows, ])
+#fit the regression imputation model.
+  regression_model <- lm(
+    regression_formula,
+    data = data_for_model[train_rows, ]
+  )
   
+#predict the hidden values using regression imputation.
+  regression_predictions <- predict(
+    regression_model,
+    newdata = data_for_model[hide_rows, ]
+  )
+  
+#error metrics for median and regression imputation.
   data.frame(
     Variable = target_variable,
     Hidden_Values = length(hide_rows),
@@ -194,354 +250,424 @@ compare_imputation_methods <- function(data, target_variable) {
 }
 
 rbind(
-  compare_imputation_methods(patients_clean, "Glucose"),
-  compare_imputation_methods(patients_clean, "BloodPressure"),
-  compare_imputation_methods(patients_clean, "BMI"),
-  compare_imputation_methods(patients_clean, "SkinThickness"),
-  compare_imputation_methods(patients_clean, "Insulin")
+  compare_imputation_methods(train_data, "Glucose"),
+  compare_imputation_methods(train_data, "BloodPressure"),
+  compare_imputation_methods(train_data, "BMI"),
+  compare_imputation_methods(train_data, "SkinThickness"),
+  compare_imputation_methods(train_data, "Insulin")
 )
 ```
-For imputation, median imputation was compared to regression for the variables where invalid zeros had been converted to missing values. This comparison was done by temporarily hiding a portion of the known values, imputing those values using each method, and then comparing the imputed values to the true values. MAE measures the average size of the prediction errors, while RMSE also measures prediction error, but gives more weight to bigger mistakes. For both measures, lower values indicate better performance. Regression imputation had lower MAE and RMSE than median imputation for glucose, blood pressure, BMI, skin thickness, and insulin, so regression is the choice for these variables in the cleaned data set. Skin thickness and insulin were not used as predictors for imputing other variables due to their high missingness. Using them as predictors would limit the model to fewer complete rows, so we chose a simpler, more consistent predictor set.
 
-# 2e
-```{r outliers-cleaned}
-detect_outliers <- function(x) {
-  q1 <- quantile(x, 0.25, na.rm = TRUE)
-  q3 <- quantile(x, 0.75, na.rm = TRUE)
-  iqr <- q3 - q1
+Before deciding on the final imputation method, median and regression imputation were compared using the training data. Regression imputation had lower MAE and RMSE for all five variables with missing values, meaning it produced smaller average errors when known values were temporarily hidden and predicted.
+
+```{r imputation-regression}
+#copies that will store the imputed data.
+train_imputed <- train_data
+test_imputed <- test_data
+
+#variables that need imputation.
+impute_vars <- c("Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI")
+
+#predictors used in the imputation models.
+impute_predictors <- c("Pregnancies", "Glucose", "BloodPressure", "BMI", "Pedigree", "Age")
+
+#calculate training medians to fill missing predictor values during imputation.
+train_medians <- sapply(
+  train_data[impute_predictors],
+  function(x) median(x, na.rm = TRUE)
+)
+
+#function that imputes one target variable at a time.
+regression_impute <- function(target_variable) {
   
-  lower <- q1 - 1.5 * iqr
-  upper <- q3 + 1.5 * iqr
+  predictors <- impute_predictors[impute_predictors != target_variable]
   
-  sum(x < lower | x > upper, na.rm = TRUE)
+#temporary copies for building the imputation model.
+  train_for_model <- train_data
+  test_for_model <- test_data
+  
+#fill missing predictor values using training medians.
+  for (var in predictors) {
+    train_for_model[[var]][is.na(train_for_model[[var]])] <- train_medians[[var]]
+    test_for_model[[var]][is.na(test_for_model[[var]])] <- train_medians[[var]]
+  }
+  
+#only training rows where the target variable is observed
+  observed_train <- !is.na(train_for_model[[target_variable]])
+  
+#regression formula for the target variable.
+  regression_formula <- as.formula(
+    paste(target_variable, "~", paste(predictors, collapse = " + "))
+  )
+  
+#fit the imputation model using training data only.
+  impute_model <- lm(
+    regression_formula,
+    data = train_for_model[observed_train, ]
+  )
+  
+#find missing values in the original train and test sets.
+  missing_train <- is.na(train_data[[target_variable]])
+  missing_test <- is.na(test_data[[target_variable]])
+  
+#impute missing training values using the training-based model.
+  train_imputed[[target_variable]][missing_train] <<- predict(
+    impute_model,
+    newdata = train_for_model[missing_train, ]
+  )
+  
+#impute missing testing values using the same training-based model.
+  test_imputed[[target_variable]][missing_test] <<- predict(
+    impute_model,
+    newdata = test_for_model[missing_test, ]
+  )
 }
 
-sapply(patients_clean, detect_outliers)
+#regression imputation on each variable with missing values.
+for (var in impute_vars) {
+  regression_impute(var)
+}
+
+colSums(is.na(train_imputed))
+colSums(is.na(test_imputed))
 ```
-After running the outlier calculation, we identified possible outliers in pregnancies, blood pressure, skin thickness, insulin, BMI, pedigree, and age. Glucose and diagnosis did not have any outliers. Most values were retained because they may represent real clinical variation rather than data entry errors. Age was noted as a separate concern because some of the high values may not fit the expected GDM screening population. However, no age values were removed or changed at this stage.
+Regression imputation was applied as a candidate imputation method because it performed better than median imputation in the error comparison. The imputation models were fit using training data, then applied to both training and testing sets. After imputation, there were no remaining missing values, but the imputed datasets still needed to be checked for impossible or unrealistic values.
+
+```{r}
+summary(train_imputed)
+summary(test_imputed)
+```
+Although regression imputation had a lower MAE and RMSE than median, the summary showed that regression imputation produced an impossible negative insulin value. Because insulin cannot possibly be negative, regression imputation was not used as the final imputation method. Median imputation will be selected because it is more stable and does not create impossible clinical values.
+
+```{r impute-median}
+#copies that will store the final imputed data
+train_imputed <- train_data
+test_imputed <- test_data
+
+#variables that need imputation.
+impute_vars <- c("Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI")
+
+#calculate medians from the training data only.
+train_medians <- sapply(
+  train_data[impute_vars],
+  function(x) median(x, na.rm = TRUE)
+)
+
+#fill missing values in both sets using training medians.
+for (var in impute_vars) {
+  train_imputed[[var]][is.na(train_imputed[[var]])] <- train_medians[[var]]
+  test_imputed[[var]][is.na(test_imputed[[var]])] <- train_medians[[var]]
+}
+
+colSums(is.na(train_imputed))
+colSums(is.na(test_imputed))
+
+summary(train_imputed)
+summary(test_imputed)
+```
+Median imputation was used as the final imputation method. The medians were calculated from the training data only and then applied to both the training and testing sets. This avoids using information from the test set while also avoiding impossible imputed values.
+
+#2e
+```{r outliers}
+
+outlier_vars <- c("Pregnancies", "Glucose", "BloodPressure", "SkinThickness",
+                  "Insulin", "BMI", "Pedigree", "Age")
+
+#IQR bounds using the training data only.
+iqr_bounds <- data.frame(
+  Variable = outlier_vars,
+  Q1 = sapply(train_imputed[outlier_vars], quantile, probs = 0.25, na.rm = TRUE),
+  Q3 = sapply(train_imputed[outlier_vars], quantile, probs = 0.75, na.rm = TRUE)
+)
+
+iqr_bounds$IQR <- iqr_bounds$Q3 - iqr_bounds$Q1
+iqr_bounds$Lower_Bound <- iqr_bounds$Q1 - 1.5 * iqr_bounds$IQR
+iqr_bounds$Upper_Bound <- iqr_bounds$Q3 + 1.5 * iqr_bounds$IQR
+
+#count outliers using the training-based IQR bounds.
+count_outliers <- function(data, bounds) {
+  sapply(bounds$Variable, function(var) {
+    lower <- bounds$Lower_Bound[bounds$Variable == var]
+    upper <- bounds$Upper_Bound[bounds$Variable == var]
+    sum(data[[var]] < lower | data[[var]] > upper)
+  })
+}
+
+train_outliers <- count_outliers(train_imputed, iqr_bounds)
+test_outliers <- count_outliers(test_imputed, iqr_bounds)
+
+iqr_bounds
+train_outliers
+test_outliers
+```
+Outliers were identified using the IQR equation after the final median imputation. The IQR bounds were calculated from the training data only and then applied to both training and testing sets. Several variables had outliers, especially insulin, which was expected because insulin had many more missing values, replaced by the training median, creating a narrow IQR. Since these outliers were not clearly impossible values like before, they were handled by retaining them rather than capping or removing.
+
+```{r final-datasets}
+train_processed <- train_imputed
+test_processed <- test_imputed
+
+summary(train_processed)
+summary(test_processed)
+```
+
+The final processed training and testing sets created after the outlier review. These sets will be used for feature selection and model building.
 
 ##Step 3
 
 #3a
+
 ```{r correlation-analysis}
-numeric_data <- patients_clean[sapply(patients_clean, is.numeric)]
+predictor_vars <- c("Pregnancies", "Glucose", "BloodPressure", "SkinThickness",
+                    "Insulin", "BMI", "Pedigree", "Age")
 
-cor_matrix <- cor(numeric_data, use = "pairwise.complete.obs")
-
-diagnosis_correlations <- data.frame(
-  Variable = rownames(cor_matrix),
-  Correlation_With_Diagnosis = cor_matrix[, "Diagnosis"]
+#calculate correlations using the training data only.
+correlations_with_diagnosis <- data.frame(
+  Variable = predictor_vars,
+  Correlation_With_Diagnosis = sapply(
+    train_processed[predictor_vars],
+    function(x) cor(x, train_processed$Diagnosis)
+  )
 )
 
-diagnosis_correlations <- diagnosis_correlations[
-  diagnosis_correlations$Variable != "Diagnosis",
+#sort variables by strongest absolute correlation with diagnosis.
+correlations_with_diagnosis <- correlations_with_diagnosis[
+  order(abs(correlations_with_diagnosis$Correlation_With_Diagnosis), decreasing = TRUE),
 ]
 
-diagnosis_correlations <- diagnosis_correlations[
-  order(abs(diagnosis_correlations$Correlation_With_Diagnosis), decreasing = TRUE),
-]
-
-diagnosis_correlations
+correlations_with_diagnosis
 ```
-For the beginning of step 3, we examined how each predictor variable was associated with diagnosis. Since diagnosis is coded for 1 as a positive GDM diagnosis and 0 for no diagnosis, a positive Pearson correlation indicates that higher values of a predictor are associated with a greater likelihood of getting a positive diagnosis. A correlation close to 0 would suggest that the variable has little individual linear association with diagnosis, while a negative correlation would indicate that higher values are more associated with not having a diagnosis.
+This is the correlation analysis which was performed using only the training data. Glucose had the strongest correlation with diagnosis, followed by BMI, pregnancies, and age. All predictors had positive correlation with diagnosis, meaning higher values were generally associated with a higher likelihood of GDM.
 
-```{r feature-selection}
-model_data_all <- patients_clean[
-  complete.cases(patients_clean[, c(
-    "Pregnancies", "Glucose", "BloodPressure", "SkinThickness",
-    "Insulin", "BMI", "Pedigree", "Age", "Diagnosis"
-  )]),
-  c(
-    "Pregnancies", "Glucose", "BloodPressure", "SkinThickness",
-    "Insulin", "BMI", "Pedigree", "Age", "Diagnosis"
-  )
-]
-
-
-#logistic regression model with all predictors
-full_model_all <- glm(
+```{r stepwise-regression}
+#fit full logistic regression model using all predictors.
+full_model <- glm(
   Diagnosis ~ Pregnancies + Glucose + BloodPressure + SkinThickness +
     Insulin + BMI + Pedigree + Age,
-  data = model_data_all,
+  data = train_processed,
   family = binomial
 )
 
-#stepwise feature selection
-stepwise_model_all <- step(full_model_all, direction = "both")
+#use stepwise selection on the training data.
+step_model <- step(
+  full_model,
+  direction = "both",
+  trace = 0
+)
 
-summary(stepwise_model_all)
+summary(step_model)
 ```
+The stepwise logistic regression was used for the model-based feature selection on the training data. The stepwise process included pregnancies, glucose, BMI, and pedigree as predictors for the regression model. These variables were selected because they improved the model enough to remain in the final stepwise model, while blood pressure, skin thickness, insulin, and age were not retained. Even though they have some relationship with diagnosis, they did not add enough additional predictive value after the selected values were already included.
 
-We used a stepwise logistic regression as a model-based feature selection method. The full model included all available predictors, which includes pregnancies, glucose, blood pressure, skin thickness, insulin, BMI, pedigree, and age. Stepwise selection used AIC to remove variables that did not improve the model enough to justify including them. The AIC decreased from 362.02 in the full model to 356.89 in the final selected model.
-The final selected model included pregnancies, glucose, BMI, pedigree, and age. Blood pressure, insulin, and skin thickness were removed by the stepwise process. Glucose, BMI, and pedigree showed the clearest evidence as predictors, while age and pregnancies were retained but should be interpreted more cautiously.
+```{r selected-variables}
+selected_vars <- c("Pregnancies", "Glucose", "BMI", "Pedigree")
 
+selected_vars
+```
+#3b
 ```{r standardization}
-#dataset using only selected predictors
-model_data_selected <- patients_clean[
-  complete.cases(patients_clean[, c(
-    "Pregnancies", "Glucose", "BMI", "Pedigree", "Age", "Diagnosis"
-  )]),
-  c("Pregnancies", "Glucose", "BMI", "Pedigree", "Age", "Diagnosis")
-]
+train_scaled <- train_processed
+test_scaled <- test_processed
 
-#standardize predictor variables
-model_data_standardized <- model_data_selected
+#calculate means and standard deviations from training data only.
+train_means <- sapply(train_processed[selected_vars], mean)
+train_sds <- sapply(train_processed[selected_vars], sd)
 
-model_data_standardized[, c("Pregnancies", "Glucose", "BMI", "Pedigree", "Age")] <-
-  scale(model_data_standardized[, c("Pregnancies", "Glucose", "BMI", "Pedigree", "Age")])
+#standardize selected predictors in the training and testing data.
+for (var in selected_vars) {
+  train_scaled[[var]] <- (train_processed[[var]] - train_means[[var]]) / train_sds[[var]]
+  test_scaled[[var]] <- (test_processed[[var]] - train_means[[var]]) / train_sds[[var]]
+}
 
-summary(model_data_standardized)
+summary(train_scaled[selected_vars])
+summary(test_scaled[selected_vars])
 ```
-
-After feature selection, we standardized the selected predictor variables, which were pregnancies, glucose, BMI, pedigree, and age. Standardization converts each predictor into a z-score-like value by subtracting the variable's mean and dividing by its standard deviation. This means that a value of zero represents an average value for a given predictor. This step is useful because the predictors are measured on different scales. For example, glucose, BMI, age, and pedigree all use different units and ranges. Standardizing them places predictors on a comparable scale before we build the model. This prepares the dataset for step 4.
+The selected predictors were standardized using only the training data. This transformed the selected predictors into z-score type values, where each value represents how many standard deviations it is above or below the training set mean. The same training set means and standard deviations were then applied to the testing data. This approach follows the same preprocessing logic described in the literature review, where preprocessing decisions should be made within the training data to avoid data leakage [16]. Standardization also makes predictors easier to compare because variables such as glucose, BMI, pregnancies, and pedigree are measured on different scales. The final selected predictors are also consistent with the literature, which identifies glucose, BMI, pregnancy history, and family history as important predictors of GDM [4], [9].
 
 ##Step 4
 
 #4a
-```{r data-partitioning}
-set.seed(123)
 
-#separate row indexes for each Diagnosis group
-index_0 <- which(model_data_selected$Diagnosis == 0)
-index_1 <- which(model_data_selected$Diagnosis == 1)
-
-#80% of each group for the training set
-train_0 <- sample(index_0, size = floor(0.80 * length(index_0)))
-train_1 <- sample(index_1, size = floor(0.80 * length(index_1)))
-
-#combine the training indexes
-train_index <- c(train_0, train_1)
-
-#training and testing datasets
-train_data <- model_data_selected[train_index, ]
-test_data <- model_data_selected[-train_index, ]
-
-dim(train_data)
-dim(test_data)
-
-#check Diagnosis proportions in the full, training, and testing data
-prop.table(table(model_data_selected$Diagnosis))
-prop.table(table(train_data$Diagnosis))
-prop.table(table(test_data$Diagnosis))
-```
-
-The modeling dataset was split into training and testing sets using an 80-20 split. Because the outcome variable was imbalanced, with 65% as non-GDM cases and 35% as GDM cases, the split was stratified by diagnosis. This ensured that the training and testing sets had nearly identical proportions of non-diagnosed to diagnosed patients. The final split includes 601 training observations and 151 testing observations. This supports a fair model evaluation because the model is tested on unseen data with a distribution similar to our original dataset. Both datasets contain approximately 64.9% non-GDM cases and 35.1% GDM cases.
+Data partitioning was completed in step 2 before imputation and feature selection. A 70/30 stratified split was used based on diagnosis. This allowed the training and testing sets to maintained similar distribution of diagnosed to non-diagnosed.
 
 #4b
-```{r modeling}
-#logistic regression model using the training data
-logistic_model <- glm(
-  Diagnosis ~ .,
-  data = train_data,
+```{r logistic-regression-model}
+final_model <- glm(
+  Diagnosis ~ Pregnancies + Glucose + BMI + Pedigree,
+  data = train_scaled,
   family = binomial
 )
 
-summary(logistic_model)
+summary(final_model)
 ```
-
-A logistic regression model was built using the training dataset and our selected features. Logistic regression was appropriate because our dependent variable, diagnosis, is binary, and because the logistic regression provides an interpretable baseline for clinical prediction. In our model, pregnancies, glucose, BMI, and pedigree were statistically significant predictors for GDM diagnosis. Age was not statistically significant in this model. The positive coefficients indicate that higher values of these predictors, generally speaking, are associated with higher predicted risk of GDM. These findings align with our literature review, which identified glucose, BMI, pregnancy history, and family history-related risk as important predictors for GDM [4], [9].
+The final logistic regression model uses pregnancies, glucose, BMI, and pedigree as predictors. These four predictors were statistically significant at the 0.05 level, with glucose having the largest coefficient of 1.0669. This aligns with the literature review because glucose measurements are repeatedly identified as central predictors of GDM risk [4], [5]. Pregnancies and BMI were also significant predictors, and this also aligns with the literature, which identifies BMI and pregnancy as relevant risk factors [4], [9]. Pedigree had a smaller but significant effect, which fits its role of family history and genetic predisposition in GDM prediction [4], [9]. Although age was emphasized in the literature, it was not retained by the stepwise model [2], [4], [9]. This suggests that in this dataset, it did not add enough predictive value after the selected variables were included. Overall, this model is reasonably consistent with the literature.
 
 #4c
-```{r evaluation}
-#predict probabilities on the testing data
+```{r model-evaluation}
+#predicted probabilities for the test set.
 test_prob <- predict(
-  logistic_model,
-  newdata = test_data,
+  final_model,
+  newdata = test_scaled,
   type = "response"
 )
 
-#convert probabilities to predicted classes using 0.50 threshold
-test_pred <- ifelse(test_prob >= 0.50, 1, 0)
-
-#make actual and predicted values factors with same levels
-actual <- factor(test_data$Diagnosis, levels = c(0, 1))
-predicted <- factor(test_pred, levels = c(0, 1))
-
-#confusion matrix
-conf_matrix <- table(Actual = actual, Predicted = predicted)
-conf_matrix
-
-#extract values from confusion matrix
-TN <- conf_matrix["0", "0"]
-FP <- conf_matrix["0", "1"]
-FN <- conf_matrix["1", "0"]
-TP <- conf_matrix["1", "1"]
-
-#calculate evaluation metrics
-accuracy <- (TP + TN) / sum(conf_matrix)
-precision <- TP / (TP + FP)
-recall <- TP / (TP + FN)
-specificity <- TN / (TN + FP)
-f1_score <- 2 * ((precision * recall) / (precision + recall))
-f2_score <- 5 * ((precision * recall) / ((4 * precision) + recall))
-
-#put metrics into a table
-metrics <- data.frame(
-  Accuracy = accuracy,
-  Precision = precision,
-  Recall = recall,
-  Specificity = specificity,
-  F1_Score = f1_score,
-  F2_Score = f2_score
-)
-
-round(metrics, 3)
-
-#calculate ROC-AUC using predicted probabilities
-auc_function <- function(actual, predicted_prob) {
-  actual_numeric <- as.numeric(as.character(actual))
-  ranks <- rank(predicted_prob)
-  n_pos <- sum(actual_numeric == 1)
-  n_neg <- sum(actual_numeric == 0)
-  
-  auc <- (sum(ranks[actual_numeric == 1]) - n_pos * (n_pos + 1) / 2) / 
-    (n_pos * n_neg)
-  
-  return(auc)
-}
-
-roc_auc <- auc_function(actual, test_prob)
-round(roc_auc, 3)
-```
-
-The logistic regression model was evaluated on the testing data set using a classification threshold of 50%. At this threshold, the model achieved accuracy of about 77.5%, meaning it correctly classified 77.5% of patients overall. The precision was about 73.2%, meaning that when the model predicted a patient as having GDM, it was correct 73.2% of the time. However, recall was lower at 56.6%, meaning the model correctly identified only 56.6% of the patients who actually had GDM. Specificity was higher at 88.8%, showing that our model was better at correctly identifying non-GDM patients rather than identifying GDM patients. The ROC AUC was 85.9%. This means that the model had a good overall ability to separate GDM and non-GDM cases across possible thresholds. However, the recall value at the default 50% threshold shows that the model still missed a meaningful number of GDM cases. In a clinical context, this is important because failing to identify high-risk patients could delay monitoring or intervention. Therefore, while the model shows useful predictive ability overall, the threshold of 50% may not be the best one if the goal is to prioritize identifying more patients with GDM.
-
-Because our literature review frames this model as a screening tool rather than a final diagnostic tool, recall is especially important. Our review explains that missing a positive GDM case may delay monitoring or intervention, so making false negatives is a major concern in this clinical context [15]. Therefore, the next step is to compare lower classification thresholds to determine whether recall improves while accuracy, precision, and specificity remain acceptable.
-
-```{r threshhold-comparision}
+#function to calculate classification metrics at a given threshold.
 calculate_metrics <- function(threshold) {
   
-  predicted_class <- ifelse(test_prob >= threshold, 1, 0)
+  test_pred <- ifelse(test_prob >= threshold, 1, 0)
   
-  actual <- factor(test_data$Diagnosis, levels = c(0, 1))
-  predicted <- factor(predicted_class, levels = c(0, 1))
+#confusion matrix
+  TP <- sum(test_pred == 1 & test_scaled$Diagnosis == 1)
+  TN <- sum(test_pred == 0 & test_scaled$Diagnosis == 0)
+  FP <- sum(test_pred == 1 & test_scaled$Diagnosis == 0)
+  FN <- sum(test_pred == 0 & test_scaled$Diagnosis == 1)
   
-  cm <- table(Actual = actual, Predicted = predicted)
-  
-  TN <- cm["0", "0"]
-  FP <- cm["0", "1"]
-  FN <- cm["1", "0"]
-  TP <- cm["1", "1"]
-  
-  accuracy <- (TP + TN) / sum(cm)
+#performance metrics from the confusion matrix
+  accuracy <- (TP + TN) / (TP + TN + FP + FN)
   precision <- TP / (TP + FP)
   recall <- TP / (TP + FN)
   specificity <- TN / (TN + FP)
-  f1_score <- 2 * ((precision * recall) / (precision + recall))
-  f2_score <- 5 * ((precision * recall) / ((4 * precision) + recall))
+  f1 <- 2 * ((precision * recall) / (precision + recall))
+  f2 <- 5 * ((precision * recall) / ((4 * precision) + recall))
   
   data.frame(
     Threshold = threshold,
+    TP = TP,
+    TN = TN,
+    FP = FP,
+    FN = FN,
     Accuracy = accuracy,
     Precision = precision,
     Recall = recall,
     Specificity = specificity,
-    F1_Score = f1_score,
-    F2_Score = f2_score
+    F1 = f1,
+    F2 = f2
   )
 }
 
-threshold_results <- rbind(
-  calculate_metrics(0.50),
-  calculate_metrics(0.45),
-  calculate_metrics(0.40),
-  calculate_metrics(0.35),
-  calculate_metrics(0.30)
+#threshholds 
+threshold_results <- do.call(
+  rbind,
+  lapply(c(0.50, 0.45, 0.35, 0.30), calculate_metrics)
 )
 
-round(threshold_results, 3)
+threshold_results
 ```
 
-The threshold comparison showed that lowering the classification threshold improved recall, which is important in this clinical context. The default of a 50% threshold had a recall of 56.6%, meaning the model missed a substantial amount of GDM cases. Lowering the threshold to 35% improved recall to 77.4%, while also producing the highest overall accuracy at 79.5%, while also having the highest F1 score at 72.6%. Although the 30% threshold produced the highest recall at 83%, it also reduced precision and specificity substantially. Therefore, the 35% threshold appears to provide the best balance between identifying more actual GDM cases while still maintaining acceptable overall performance from the model.
+#4c
+```{r model-eval-ROCAUC}
+library(pROC)
 
-When compared with the literature review, our logistic regression model showed reasonable predictive performance, especially with a ROC-AUC of 85.9%. However, a direct comparison to published studies should be viewed with caution because these reviewed studies used different datasets, different validation methods, had different sample sizes, and predictors. Our literature review noted that model performance can vary substantially depending on the dataset and validation approach [4]. In addition to this, our dataset is relatively small, lacks demographic variables, and uses a limited set of routinely collected clinical predictors. These differences might explain why our model shows a useful overall separation but still requires a threshold adjustment to improve recall in a clinical screening context.
+# Create ROC object using actual diagnoses and predicted probabilities.
+roc_model <- roc(
+  response = test_scaled$Diagnosis,
+  predictor = test_prob,
+  quiet = TRUE
+)
+
+# Calculate ROC-AUC.
+auc_model <- auc(roc_model)
+auc_model
+
+# Plot the ROC curve.
+plot(
+  roc_model,
+  main = "ROC Curve for Logistic Regression Model"
+)
+```
+
+The logistic regression model was evaluated using thresholds of 50%, 45%, 35%, and 30%. Accuracy was very similar across the tested thresholds, ranging from 77.1% to 77.9%.  The threshold decision was based on the balance between precision, recall, specificity, F1, and F2 score. The 35% threshold had the highest accuracy, precision, and specificity, making it a slightly more conservative and balanced option. However, the 30% threshold had the highest recall by far at 84%, the highest F1 score at 72.3%, and the highest F2 score at 78.9%, while maintaining nearly the same accuracy as the 35% threshold. Because this project focuses on identifying patients at risk for GDM, the 30% threshold was selected. This threshold improves the model's ability to identify diagnosed cases, while only slightly reducing precision and specificity, which is appropriate for a screening-oriented prediction model [15].
+
+The ROC AUC for the logistic regression model was 85.8%. This indicates good discrimination between diagnosed and non-diagnosed patients. This suggests that the model is generally effective at ranking higher-risk patients above lower-risk patients. The performance is reasonably consistent with the literature, where GDM prediction models often show useful but variable performance depending on the dataset size, predictors, validation methods, and type of model [4], [5]. Compared with more complex machine learning models, this logistic regression model is simpler and more interpretable, but may be limited by the small dataset and small number of clinical predictors.
 
 #4d
 ```{r odds-ratios}
-odds_ratios <- data.frame(
-  Predictor = names(coef(logistic_model)),
-  Coefficient = coef(logistic_model),
-  Odds_Ratio = exp(coef(logistic_model)),
-  Lower_95_CI = exp(confint.default(logistic_model)[, 1]),
-  Upper_95_CI = exp(confint.default(logistic_model)[, 2]),
-  P_Value = summary(logistic_model)$coefficients[, 4]
-)
+#coefficient table from the final logistic regression model.
+coef_table <- summary(final_model)$coefficients
 
-odds_ratios$Coefficient <- round(odds_ratios$Coefficient, 3)
-odds_ratios$Odds_Ratio <- round(odds_ratios$Odds_Ratio, 3)
-odds_ratios$Lower_95_CI <- round(odds_ratios$Lower_95_CI, 3)
-odds_ratios$Upper_95_CI <- round(odds_ratios$Upper_95_CI, 3)
-odds_ratios$P_Value <- round(odds_ratios$P_Value, 4)
+#convert log-odds coefficients into odds ratios.
+odds_ratios <- data.frame(
+  Predictor = rownames(coef_table),
+  Estimate = coef_table[, "Estimate"],
+  Odds_Ratio = exp(coef_table[, "Estimate"]),
+  CI_Lower = exp(coef_table[, "Estimate"] - 1.96 * coef_table[, "Std. Error"]),
+  CI_Upper = exp(coef_table[, "Estimate"] + 1.96 * coef_table[, "Std. Error"]),
+  P_Value = coef_table[, "Pr(>|z|)"]
+)
 
 odds_ratios
 ```
 
-The odds ratio results helped us interpret the logistic regression model in practical terms. Pregnancies, glucose, BMI, and pedigree were all positively associated with the GDM diagnosis. Holding the other features consistent, each additional pregnancy was associated with 1.131 times higher odds of GDM. Each one-unit increase in glucose was associated with 1.035 times higher odds of GDM, and each one-unit increase in BMI was associated with 1.091 times higher odds. The pedigree variable had an odds ratio of 1.996, suggesting that higher family history-related diabetes risk was associated with substantially higher odds of GDM. These findings align with the literature review, which identified glucose, BMI, pregnancy history, and family history risk as important predictors for GDM [4], [9].
-
-Age had an odds ratio of 1.004 and was not statistically significant, suggesting that age did not add meaningful independent predictive value after accounting for the other features in this model. Although age is commonly identified in the literature as a GDM risk factor, it was retained because it was selected during feature selection and is supported by prior research.
-
-Another important point is that although pedigree had the largest odds ratio, this reflects a one-unit increase in that variable, which may be a large change. Glucose had the strongest statistical evidence in the model, and remains one of the most important predictors, especially because glucose values vary over a wider range and are directly related to a GDM diagnosis.
-
 ```{r calibration}
+#dataset with actual outcomes and predicted probabilities.
 calibration_data <- data.frame(
-  Actual = test_data$Diagnosis,
+  Actual = test_scaled$Diagnosis,
   Predicted_Probability = test_prob
 )
 
-#put predicted probabilities into risk bins
+#spliting patients into 10 groups based on predicted risk.
 calibration_data$Risk_Group <- cut(
-  calibration_data$Predicted_Probability,
-  breaks = c(0, 0.20, 0.40, 0.60, 0.80, 1),
-  include.lowest = TRUE
+  rank(calibration_data$Predicted_Probability, ties.method = "first"),
+  breaks = 10,
+  labels = paste0("Group_", 1:10)
 )
 
-#compare average predicted risk to observed GDM rate in each group
+#average predicted risk to actual diagnosis rate in each group.
 calibration_table <- aggregate(
   cbind(Predicted_Probability, Actual) ~ Risk_Group,
   data = calibration_data,
   FUN = mean
 )
 
-group_counts <- aggregate(
-  Actual ~ Risk_Group,
-  data = calibration_data,
-  FUN = length
-)
-
-calibration_table$N <- group_counts$Actual
-
-#rename columns
 names(calibration_table) <- c(
   "Risk_Group",
-  "Average_Predicted_Risk",
-  "Observed_GDM_Rate",
-  "N"
+  "Mean_Predicted_Risk",
+  "Observed_GDM_Rate"
 )
-calibration_table$Average_Predicted_Risk <- round(calibration_table$Average_Predicted_Risk, 3)
-calibration_table$Observed_GDM_Rate <- round(calibration_table$Observed_GDM_Rate, 3)
+
+calibration_table$N <- as.vector(table(calibration_data$Risk_Group))
 
 calibration_table
-```
 
-Calibration was assessed by grouping patients into predicted risk ranges and comparing the average predicted probability with the observed GDM rate in each group. Overall, the model appeared reasonably well-calibrated. In the 20-40%, 40-60%, and 60-80% groups, the average predicted risks were close to the observed GDM rate. The lowest risk group showed some overestimation, while the highest risk group showed underestimation because all patients in that group had GDM. However, it should be noted that the highest risk group only contained 14 patients. Overall, calibration results suggest that the model's predicted probabilities were reasonably consistent with the observed GDM rate.
+#Brier score measure for predicted error of probabilites
+brier_score <- mean((test_prob - test_scaled$Diagnosis)^2)
+brier_score
 
-```{r correction}
-#predictor p-values
-raw_p_values <- summary(logistic_model)$coefficients[-1, 4]
-
-#Benjamini-Hochberg false discovery rate correction
-adjusted_p_values <- p.adjust(raw_p_values, method = "BH")
-
-multiple_testing_results <- data.frame(
-  Predictor = names(raw_p_values),
-  Raw_P_Value = raw_p_values,
-  Adjusted_P_Value = adjusted_p_values
+plot(
+  calibration_table$Mean_Predicted_Risk,
+  calibration_table$Observed_GDM_Rate,
+  xlim = c(0, 1),
+  ylim = c(0, 1),
+  xlab = "Mean Predicted Risk",
+  ylab = "Observed GDM Rate",
+  main = "Calibration Plot"
 )
 
-multiple_testing_results$Raw_P_Value <- round(multiple_testing_results$Raw_P_Value, 4)
-multiple_testing_results$Adjusted_P_Value <- round(multiple_testing_results$Adjusted_P_Value, 4)
+abline(0, 1, lty = 2)
+```
+
+
+The model's calibration was assessed by comparing mean predicted risk with observed GDM rate across 10 risk groups. The calibration plot showed that most points followed the reference line fairly closely. This suggests that the model's predicted probabilities were reasonably aligned with actual diagnosis rates. The Brier score was 0.1455, which provides a summary of the probability prediction error.
+
+In addition, the odds ratios aligned with known clinical risk factors for GDM. Because the predictors were standardized, the odds ratio represents the change in odds of diagnosis for one standard deviation increase in that predictor, holding the other predictors consistent. Glucose had the strongest effect, with an odds ratio of 2.91, meaning glucose was associated with substantially higher odds of diagnosis. Pregnancies and BMI also had meaningful positive associations with odds ratios of 1.74 and 1.7. Pedigree had a smaller but still significant effect with an odds ratio of 1.34. This is consistent with the literature, which identifies glucose, BMI, pregnancy history, and family history as important risk factors when trying to predict GDM [4], [5], [9]. 
+
+#4e
+```{r multiple-testing-correction}
+# Extract p-values for the predictors, excluding the intercept.
+predictor_p_values <- summary(final_model)$coefficients[
+  rownames(summary(final_model)$coefficients) != "(Intercept)",
+  "Pr(>|z|)"
+]
+
+# Apply multiple testing corrections to the predictor p-values.
+multiple_testing_results <- data.frame(
+  Predictor = names(predictor_p_values),
+  Unadjusted_P_Value = predictor_p_values,
+  BH_Adjusted_P_Value = p.adjust(predictor_p_values, method = "BH"),
+  Bonferroni_Adjusted_P_Value = p.adjust(predictor_p_values, method = "bonferroni")
+)
 
 multiple_testing_results
 ```
 
-Multiple p-values were interpreted in the logistic regression model. To reduce the risk of overstating statistical significance, a Benjamini-Hochberg correction was applied. After correction, pregnancies, glucose, and BMI remained statistically significant predictors. Pedigree was significant before correction, but its adjusted p-value was 0.0504, which is slightly above the 0.05 threshold. Therefore, pedigree should be interpreted cautiously as a predictor. Age remained non-significant after correction.
+Multiple testing correction was applied to the p-values for the predictors included in the final logistic regression model. Both Benjamini-Hochberg and Bonferroni corrections were used. All four predictors remained statistically significant after correction. Glucose, pregnancies, and BMI remained highly significant, while pedigree had the weakest adjusted p-value. This supports the final model's predictor-level findings and suggests that selected predictors were not only significant due to multiple testing.
+
