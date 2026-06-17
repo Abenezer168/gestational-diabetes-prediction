@@ -1,0 +1,746 @@
+---
+title: "Complete- GDM prediction"
+output:
+  word_document: default
+  html_document: default
+date: "2026-06-16"
+---
+SET UP
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,          # Show R code in the final output document
+  warning = FALSE,      # Suppress warnings from appearing in the report
+  message = FALSE,      # Suppress package loading messages
+  fig.width = 7,        # Set default figure width to 7 inches
+  fig.height = 5        # Set default figure height to 5 inches
+)
+
+# Load necessary packages
+library(tidyverse)
+library(knitr)
+library(skimr)
+library(janitor)
+library(tidymodels)
+
+knitr::opts_knit$set(
+  root.dir = "C:/Users/Daniela/OneDrive - Minnesota State/SUM26/CIS690/CIS690_GDMprediction"
+)
+```
+Load Data
+```{r}
+patients <- read_csv("patients.csv") %>%
+  clean_names()
+
+names(patients)
+```
+*Data Exploration and Visualizations*
+```{r}
+# Inspect first rows
+head(patients)
+
+# Check structure
+str(patients)
+```
+```{r}
+#Check for missing values 
+patients %>% summarise(across(everything(), ~sum(. == 0, na.rm = TRUE)))
+```
+Convert impossible zero values to NA
+```{r}
+patients_clean <- patients %>%
+  mutate(
+    glucose = ifelse(glucose == 0, NA, glucose),
+    blood_pressure = ifelse(blood_pressure == 0, NA, blood_pressure),
+    skin_thickness = ifelse(skin_thickness == 0, NA, skin_thickness),
+    insulin = ifelse(insulin == 0, NA, insulin),
+    bmi = ifelse(bmi == 0, NA, bmi))
+
+
+colSums(is.na(patients_clean))
+```
+Convert diagnosis to a factor as this is the target variable.
+```{r}
+patients_clean <- patients_clean %>%
+  mutate(
+    diagnosis = factor(diagnosis, levels = c(0, 1))
+  )
+```
+Split into training and test data. This step is being done before imputation to avoid data leakage. 
+```{r}
+library(tidymodels)
+
+set.seed(123)
+
+data_split <- initial_split(
+  patients_clean,
+  prop = 0.70,
+  strata = diagnosis
+)
+
+train_data <- training(data_split)
+test_data <- testing(data_split)
+```
+Checking to see the split.
+```{r}
+table(train_data$diagnosis)
+table(test_data$diagnosis)
+```
+Check for outliers
+```{r}
+detect_outliers <- function(x) {
+  q1 <- quantile(x, 0.25, na.rm = TRUE)
+  q3 <- quantile(x, 0.75, na.rm = TRUE)
+  iqr <- q3 - q1
+  
+  lower <- q1 - 1.5 * iqr
+  upper <- q3 + 1.5 * iqr
+  
+  x < lower | x > upper
+}
+
+#Count outliers in training data 
+train_data %>%
+  summarise(across(
+    c(pregnancies, glucose, blood_pressure, skin_thickness, insulin, bmi, pedigree, age),
+    ~sum(detect_outliers(.), na.rm = TRUE)
+  ))
+
+```
+```{r}
+#Visualize outliers
+train_data %>%
+  pivot_longer(
+    cols = c(pregnancies, glucose, blood_pressure, skin_thickness, insulin, bmi, pedigree, age),
+    names_to = "variable",
+    values_to = "value"
+  ) %>%
+  ggplot(aes(x = variable, y = value)) +
+  geom_boxplot() +
+  coord_flip() +
+  labs(
+    title = "Outliers in Training Data",
+    x = "Variable",
+    y = "Value"
+  )
+```
+insulin has the most outliers
+
+
+Creating a conservative model where insulin is dropped due to so many missing and outlier values. 
+```{r}
+train_conservative <- train_data %>%
+  select(-insulin)
+
+test_conservative <- test_data %>%
+  select(-insulin)
+
+recipe_conservative <- recipe(diagnosis ~ ., data = train_conservative) %>%
+  step_impute_median(glucose, blood_pressure, bmi) %>%
+  step_impute_linear(
+    skin_thickness,
+    impute_with = imp_vars(
+      pregnancies,
+      glucose,
+      blood_pressure,
+      bmi,
+      pedigree,
+      age
+    )
+  )
+
+prep_conservative <- prep(recipe_conservative, training = train_conservative)
+
+train_conservative_processed <- bake(
+  prep_conservative,
+  new_data = train_conservative
+)
+
+test_conservative_processed <- bake(
+  prep_conservative,
+  new_data = test_conservative
+)
+
+colSums(is.na(train_conservative_processed))
+colSums(is.na(test_conservative_processed))
+```
+Training the conservative model - all features except insulin
+```{r}
+model_conservative <- glm(
+  diagnosis ~ .,
+  data = train_conservative_processed,
+  family = binomial
+)
+summary(model_conservative)
+```
+Make predictions using the conservative model 
+```{r}
+test_conservative_processed$prob_conservative <- predict(
+  model_conservative,
+  newdata = test_conservative_processed,
+  type = "response"
+)
+
+test_conservative_processed$pred_conservative <- ifelse(
+  test_conservative_processed$prob_conservative >= 0.5,
+  1,
+  0
+)
+
+test_conservative_processed$pred_conservative <- factor(
+  test_conservative_processed$pred_conservative,
+  levels = c(0, 1)
+)
+```
+```{r}
+test_conservative_processed %>%
+  select(diagnosis, prob_conservative, pred_conservative) %>%
+  head()
+```
+
+*Create a model that utilizes all features, imputing skin-thickness and insulin using regression.* 
+```{r}
+recipe_full <- recipe(diagnosis ~ ., data = train_data) %>%
+  step_impute_median(glucose, blood_pressure, bmi) %>%
+  step_impute_linear(
+    skin_thickness,
+    impute_with = imp_vars(
+      pregnancies,
+      glucose,
+      blood_pressure,
+      bmi,
+      pedigree,
+      age
+    )
+  ) %>%
+  step_impute_linear(
+    insulin,
+    impute_with = imp_vars(
+      pregnancies,
+      glucose,
+      blood_pressure,
+      skin_thickness,
+      bmi,
+      pedigree,
+      age
+    )
+  )
+
+prep_full <- prep(recipe_full, training = train_data)
+
+train_full_processed <- bake(
+  prep_full,
+  new_data = train_data
+)
+
+test_full_processed <- bake(
+  prep_full,
+  new_data = test_data
+)
+
+#Check for missing values
+colSums(is.na(train_full_processed))
+colSums(is.na(test_full_processed))
+```
+Train the model with "full" dataset
+```{r}
+model_full <- glm(
+  diagnosis ~ .,
+  data = train_full_processed,
+  family = binomial
+)
+summary(model_full)
+```
+Make predictions
+```{r}
+test_full_processed$prob_full <- predict(
+  model_full,
+  newdata = test_full_processed,
+  type = "response"
+)
+
+test_full_processed$pred_full <- ifelse(
+  test_full_processed$prob_full >= 0.5,
+  1,
+  0
+)
+
+test_full_processed$pred_full <- factor(
+  test_full_processed$pred_full,
+  levels = c(0, 1)
+)
+
+```
+Evaluate conservative model 
+```{r}
+conf_mat(
+  test_conservative_processed,
+  truth = diagnosis,
+  estimate = pred_conservative
+)
+```
+```{r}
+metrics_conservative <- tibble(
+  model = "Conservative: No Insulin",
+  accuracy = accuracy(
+    test_conservative_processed,
+    truth = diagnosis,
+    estimate = pred_conservative
+  )$.estimate,
+  sensitivity = sens(
+    test_conservative_processed,
+    truth = diagnosis,
+    estimate = pred_conservative,
+    event_level = "second"
+  )$.estimate,
+  specificity = spec(
+    test_conservative_processed,
+    truth = diagnosis,
+    estimate = pred_conservative,
+    event_level = "second"
+  )$.estimate,
+  precision = precision(
+    test_conservative_processed,
+    truth = diagnosis,
+    estimate = pred_conservative,
+    event_level = "second"
+  )$.estimate,
+  f1 = f_meas(
+    test_conservative_processed,
+    truth = diagnosis,
+    estimate = pred_conservative,
+    event_level = "second"
+  )$.estimate,
+  auc = roc_auc(
+    test_conservative_processed,
+    truth = diagnosis,
+    prob_conservative,
+    event_level = "second"
+  )$.estimate
+)
+```
+Evaluate full model 
+```{r}
+conf_mat(
+  test_full_processed,
+  truth = diagnosis,
+  estimate = pred_full
+)
+
+#metrics
+metrics_full <- tibble(
+  model = "Full: Regression-Imputed Insulin",
+  accuracy = accuracy(
+    test_full_processed,
+    truth = diagnosis,
+    estimate = pred_full
+  )$.estimate,
+  sensitivity = sens(
+    test_full_processed,
+    truth = diagnosis,
+    estimate = pred_full,
+    event_level = "second"
+  )$.estimate,
+  specificity = spec(
+    test_full_processed,
+    truth = diagnosis,
+    estimate = pred_full,
+    event_level = "second"
+  )$.estimate,
+  precision = precision(
+    test_full_processed,
+    truth = diagnosis,
+    estimate = pred_full,
+    event_level = "second"
+  )$.estimate,
+  f1 = f_meas(
+    test_full_processed,
+    truth = diagnosis,
+    estimate = pred_full,
+    event_level = "second"
+  )$.estimate,
+  auc = roc_auc(
+    test_full_processed,
+    truth = diagnosis,
+    prob_full,
+    event_level = "second"
+  )$.estimate
+)
+```
+Comparison of both models 
+```{r}
+model_comparison <- bind_rows(
+  metrics_conservative,
+  metrics_full
+)
+
+model_comparison
+```
+Both models had equal sensitivity, meaning tehy are catching the same actual GDM cases (58%) . However, the conservative model was better accross all other metrics which is an indication that having imputed insulin didn't improve the model.
+
+Both models showed good overall discrimination, with AUC values above 0.84, suggesting that the predictors can reasonably separate GDM and non-GDM cases. However, sensitivity was only about 58%, meaning that the models missed approximately 42% of true GDM cases at the default 0.5 threshold. In a clinical screening context, this is an important limitation because false negatives could delay intervention.
+
+*The conservative model without insulin is preferred because it performs slightly better than the full model while avoiding reliance on a variable with nearly 49% missing values.*
+
+*Experimenting with capping outliers*
+```{R}
+#Calculate capping bounds
+get_iqr_bounds <- function(data, var) {
+  x <- data[[var]]
+  q1 <- quantile(x, 0.25, na.rm = TRUE)
+  q3 <- quantile(x, 0.75, na.rm = TRUE)
+  iqr <- q3 - q1
+  
+  tibble(
+    variable = var,
+    lower = q1 - 1.5 * iqr,
+    upper = q3 + 1.5 * iqr
+  )
+}
+
+#set capping variables
+vars_to_cap <- c(
+  "pregnancies",
+  "glucose",
+  "blood_pressure",
+  "skin_thickness",
+  "bmi",
+  "pedigree",
+  "age"
+)
+
+#Bounds from training data only
+outlier_bounds <- map_dfr(vars_to_cap, ~get_iqr_bounds(train_data, .x))
+
+outlier_bounds
+
+#apply capping
+cap_with_bounds <- function(data, bounds_table) {
+  for (i in 1:nrow(bounds_table)) {
+    var <- bounds_table$variable[i]
+    lower <- bounds_table$lower[i]
+    upper <- bounds_table$upper[i]
+    
+    data[[var]] <- ifelse(data[[var]] < lower, lower, data[[var]])
+    data[[var]] <- ifelse(data[[var]] > upper, upper, data[[var]])
+  }
+  
+  data
+}
+
+train_data_capped <- cap_with_bounds(train_data, outlier_bounds)
+test_data_capped <- cap_with_bounds(test_data, outlier_bounds)
+```
+*Rerun conservative model*
+```{r}
+recipe_conservative_capped <- recipe(diagnosis ~ ., data = train_data_capped) %>%
+  step_rm(insulin) %>%
+  step_impute_median(glucose, blood_pressure, bmi) %>%
+  step_impute_linear(
+    skin_thickness,
+    impute_with = imp_vars(
+      pregnancies,
+      glucose,
+      blood_pressure,
+      bmi,
+      pedigree,
+      age
+    )
+  )
+
+prep_conservative_capped <- prep(
+  recipe_conservative_capped,
+  training = train_data_capped
+)
+
+train_conservative_capped_processed <- bake(
+  prep_conservative_capped,
+  new_data = train_data_capped
+)
+
+test_conservative_capped_processed <- bake(
+  prep_conservative_capped,
+  new_data = test_data_capped
+)
+
+#Train 
+model_conservative_capped <- glm(
+  diagnosis ~ .,
+  data = train_conservative_capped_processed,
+  family = binomial
+)
+
+#Predict
+test_conservative_capped_processed$prob_capped <- predict(
+  model_conservative_capped,
+  newdata = test_conservative_capped_processed,
+  type = "response"
+)
+
+test_conservative_capped_processed$pred_capped <- ifelse(
+  test_conservative_capped_processed$prob_capped >= 0.5,
+  1,
+  0
+)
+
+test_conservative_capped_processed$pred_capped <- factor(
+  test_conservative_capped_processed$pred_capped,
+  levels = c(0, 1)
+)
+```
+
+Evaluate metrics with original conservative model
+```{r}
+metrics_capped <- tibble(
+  model = "Conservative: Outliers Capped",
+  accuracy = accuracy(test_conservative_capped_processed, truth = diagnosis, estimate = pred_capped)$.estimate,
+  sensitivity = sens(test_conservative_capped_processed, truth = diagnosis, estimate = pred_capped, event_level = "second")$.estimate,
+  specificity = spec(test_conservative_capped_processed, truth = diagnosis, estimate = pred_capped, event_level = "second")$.estimate,
+  precision = precision(test_conservative_capped_processed, truth = diagnosis, estimate = pred_capped, event_level = "second")$.estimate,
+  f1 = f_meas(test_conservative_capped_processed, truth = diagnosis, estimate = pred_capped, event_level = "second")$.estimate,
+  auc = roc_auc(test_conservative_capped_processed, truth = diagnosis, prob_capped, event_level = "second")$.estimate
+)
+bind_rows(metrics_conservative, metrics_capped)
+```
+There was only a 0.12% improvement in the AUC which suggests that keeping the extreme outliers is not necessarily adding any meaningful information to the model. 
+
+*Feature selection*
+Checking for multicollinearity
+```{r}
+library(car)
+vif(model_conservative_capped)
+```
+Using stepwise as an exploratory tool 
+```{r}
+library(MASS)
+model_conservative_capped_step <- stepAIC(
+  model_conservative_capped,
+  direction = "both",
+  trace = TRUE
+)
+
+summary(model_conservative_capped_step)
+```
+
+Check what features the model selected: 
+```{r}
+formula(model_conservative_capped_step)
+```
+Stepwise suggests removing skin thickness and blood pressure. *Predict and Compare*
+```{r}
+test_conservative_capped_processed$prob_capped_step <- predict(
+  model_conservative_capped_step,
+  newdata = test_conservative_capped_processed,
+  type = "response"
+)
+
+test_conservative_capped_processed$pred_capped_step <- ifelse(
+  test_conservative_capped_processed$prob_capped_step >= 0.5,
+  1,
+  0
+)
+
+test_conservative_capped_processed$pred_capped_step <- factor(
+  test_conservative_capped_processed$pred_capped_step,
+  levels = c(0, 1)
+)
+
+metrics_capped_step <- tibble(
+  model = "Conservative: Capped + Stepwise",
+  accuracy = accuracy(test_conservative_capped_processed, truth = diagnosis, estimate = pred_capped_step)$.estimate,
+  sensitivity = sens(test_conservative_capped_processed, truth = diagnosis, estimate = pred_capped_step, event_level = "second")$.estimate,
+  specificity = spec(test_conservative_capped_processed, truth = diagnosis, estimate = pred_capped_step, event_level = "second")$.estimate,
+  precision = precision(test_conservative_capped_processed, truth = diagnosis, estimate = pred_capped_step, event_level = "second")$.estimate,
+  f1 = f_meas(test_conservative_capped_processed, truth = diagnosis, estimate = pred_capped_step, event_level = "second")$.estimate,
+  auc = roc_auc(test_conservative_capped_processed, truth = diagnosis, prob_capped_step, event_level = "second")$.estimate
+)
+
+bind_rows(metrics_conservative, metrics_capped, metrics_capped_step)
+
+```
+Stepwise feature selection produced nearly identical performance to the full conservative model, suggesting that the original clinically informed predictor set was already reasonable. Because the improvement in AUC was minimal, feature selection did not provide meaningful performance gains.
+
+Capping outliers produced nearly identical classification metrics and only a minimal change in AUC. This suggests that extreme values were not substantially harming model performance. Because extreme glucose, BMI, or age values may represent clinically meaningful high-risk patients, retaining plausible outliers may be more appropriate than aggressively modifying them.
+
+*Trying K fold validations*
+```{r}
+#saving results for comparison later
+baseline_results <- model_comparison
+baseline_results
+```
+```{r}
+set.seed(123)
+folds_conservative <- vfold_cv(
+  train_data,
+  v = 5,
+  strata = diagnosis
+)
+```
+
+```{r}
+cv_recipe_conservative <- recipe(diagnosis ~ ., data = train_data) %>%
+  step_rm(insulin) %>%
+  step_impute_median(glucose, blood_pressure, bmi) %>%
+  step_impute_linear(
+    skin_thickness,
+    impute_with = imp_vars(
+      pregnancies,
+      glucose,
+      blood_pressure,
+      bmi,
+      pedigree,
+      age
+    )
+  )
+```
+
+```{r}
+log_reg_spec <- logistic_reg() %>%
+  set_engine("glm")
+
+cv_workflow_conservative <- workflow() %>%
+  add_recipe(cv_recipe_conservative) %>%
+  add_model(log_reg_spec)
+
+library(yardstick)
+
+sens_gdm <- metric_tweak(
+  "sens_gdm",
+  sens,
+  event_level = "second"
+)
+
+spec_gdm <- metric_tweak(
+  "spec_gdm",
+  spec,
+  event_level = "second"
+)
+
+precision_gdm <- metric_tweak(
+  "precision_gdm",
+  precision,
+  event_level = "second"
+)
+
+f1_gdm <- metric_tweak(
+  "f1_gdm",
+  f_meas,
+  event_level = "second"
+)
+
+auc_gdm <- metric_tweak(
+  "auc_gdm",
+  roc_auc,
+  event_level = "second"
+)
+
+cv_results_conservative <- fit_resamples(
+  cv_workflow_conservative,
+  resamples = folds_conservative,
+  metrics = metric_set(accuracy, sens, spec, precision, f_meas, roc_auc),
+  control = control_resamples(save_pred = TRUE)
+)
+collect_metrics(cv_results_conservative)
+```
+Imputing Insulin and Skin Thickness with median 
+```{r}
+# Full model: median imputation for all missing predictors, including skin_thickness and insulin
+
+recipe_full_median <- recipe(diagnosis ~ ., data = train_data) %>%
+  step_impute_median(glucose, blood_pressure, bmi, skin_thickness, insulin)
+
+prep_full_median <- prep(recipe_full_median, training = train_data)
+
+train_full_median_processed <- bake(
+  prep_full_median,
+  new_data = train_data
+)
+
+test_full_median_processed <- bake(
+  prep_full_median,
+  new_data = test_data
+)
+
+# Check that missing values were handled
+colSums(is.na(train_full_median_processed))
+colSums(is.na(test_full_median_processed))
+
+# Train logistic regression model
+model_full_median <- glm(
+  diagnosis ~ .,
+  data = train_full_median_processed,
+  family = binomial
+)
+
+summary(model_full_median)
+
+# Predicted probabilities
+test_full_median_processed$prob_full_median <- predict(
+  model_full_median,
+  newdata = test_full_median_processed,
+  type = "response"
+)
+
+# Convert probabilities to class predictions using 0.50 threshold
+test_full_median_processed$pred_full_median <- ifelse(
+  test_full_median_processed$prob_full_median >= 0.5,
+  1,
+  0
+)
+
+test_full_median_processed$pred_full_median <- factor(
+  test_full_median_processed$pred_full_median,
+  levels = c(0, 1)
+)
+
+# Confusion matrix
+conf_mat(
+  test_full_median_processed,
+  truth = diagnosis,
+  estimate = pred_full_median
+)
+
+# Metrics
+metrics_full_median <- tibble(
+  model = "Full: All Median-Imputed",
+  accuracy = accuracy(
+    test_full_median_processed,
+    truth = diagnosis,
+    estimate = pred_full_median
+  )$.estimate,
+  sensitivity = sens(
+    test_full_median_processed,
+    truth = diagnosis,
+    estimate = pred_full_median,
+    event_level = "second"
+  )$.estimate,
+  specificity = spec(
+    test_full_median_processed,
+    truth = diagnosis,
+    estimate = pred_full_median,
+    event_level = "second"
+  )$.estimate,
+  precision = precision(
+    test_full_median_processed,
+    truth = diagnosis,
+    estimate = pred_full_median,
+    event_level = "second"
+  )$.estimate,
+  f1 = f_meas(
+    test_full_median_processed,
+    truth = diagnosis,
+    estimate = pred_full_median,
+    event_level = "second"
+  )$.estimate,
+  auc = roc_auc(
+    test_full_median_processed,
+    truth = diagnosis,
+    prob_full_median,
+    event_level = "second"
+  )$.estimate
+)
+
+bind_rows(model_comparison, metrics_capped, metrics_full_median)
+```
+```{r}
+bind_rows(model_comparison, metrics_capped, metrics_full_median,metrics_step)
+```
