@@ -11,9 +11,9 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
 # 2a: Load and Inspect
 
-```{r }
+```{r data-inspection}
 # Load the dataset
-patients <- read.csv("C:/Group Project/patients.csv")
+patients <- read.csv("patients.csv")
 
 # View first few rows
 head(patients)
@@ -25,7 +25,7 @@ dim(patients)
 
 # 2b: Summary Statistics
 
-```{r }
+```{r summary-stats}
 # Summary statistics for all variables
 summary(patients)
 
@@ -37,7 +37,7 @@ Pregnancies: Mean = 3.85, Median = 3, SD = 3.37, Q1 = 1, Q3 = 6, Range = 0 to 17
 
 Glucose: Mean = 120.9, Median = 117, SD = 31.97, Q1 = 99, Q3 = 140.25, Range = 0 to 199. The mean and median are close together suggesting a fairly symmetric distribution. The minimum of zero is not clinically possible and will be treated as missing.
 
-BloodPressure: Mean = 69.11, Median = 72, SD = 19.36, Q1 = 62, Q3 = 80, Range = 0 to 122. Values are centered around a normal diastolic range of 62 to 80. The minimum of zero is not a valid blood pressure reading and will be treated as missing.
+BloodPressure: Mean = 69.11, Median = 72, SD = 19.36, Q1 = 62, Q3 = 80, Range = 0 to 122. Values are centered around a diastolic range of 62 to 80. The minimum of zero is not a valid blood pressure reading and will be treated as missing.
 
 SkinThickness: Mean = 20.54, Median = 23, SD = 15.95, Q1 = 0, Q3 = 32, Range = 0 to 99. The first quartile being zero tells us that at least 25% of the values are zero, which confirms the high level of missingness at 29.6% of the data.
 
@@ -47,15 +47,15 @@ BMI: Mean = 31.99, Median = 32, SD = 7.88, Q1 = 27.3, Q3 = 36.6, Range = 0 to 67
 
 Pedigree: Mean = 0.47, Median = 0.37, SD = 0.33, Q1 = 0.24, Q3 = 0.63, Range = 0.08 to 2.42. Right skewed with most values concentrated below 1.0. No zeros or missing values.
 
-Age: Mean = 33.24, Median = 29, SD = 11.76, Q1 = 24, Q3 = 41, Range = 21 to 81. Right skewed with most patients in their late twenties to early thirties. No zeros or missing values.
+Age: Mean = 33.24, Median = 29, SD = 11.76, Q1 = 24, Q3 = 41, Range = 21 to 81. Right skewed with most patients between their mid-twenties and early forties. No zeros or missing values. Given that this dataset is centered around GDM, 81 as the max age is clinically unusual and should be interpreted cautiously.
 
 Diagnosis: Mean = 0.349 confirms the class distribution with approximately 35% of patients having a GDM diagnosis and 65% not.
 
-The most immediate concern from these statistics is the zero values in Glucose, BloodPressure, SkinThickness, Insulin, and BMI. Insulin is the most problematic with a first quartile of zero, a mean far above the median, and an SD of 115 indicating extreme variability. These zeros are not real measurements and will be addressed in step 2d.
+The most immediate concern from these statistics is the zero values in Glucose, BloodPressure, SkinThickness, Insulin, and BMI. Treating these implausible clinical values as missing or invalid is consistent with diabetes prediction preprocessing practices [16]. Insulin is the most problematic with a first quartile of zero, a mean far above the median, and an SD of 115 indicating extreme variability. These zeros are not real measurements and will be addressed in Step 2d.
 
 # 2c: Visualization, used full raw data for exploration
 
-```{r }
+```{r}
 library(ggplot2)
 ```
 
@@ -73,7 +73,7 @@ ggplot(patients, aes(x = factor(Diagnosis), fill = factor(Diagnosis))) +
   theme_minimal()
 ```
 ##Interpretation-
-The bar chart displays the number of patients in each diagnosis category. The No GDM group contains approximately 500 patients, while the GDM group contains approximately 268 patients. This indicates that the dataset contains more patients without gestational diabetes than patients with gestational diabetes, suggesting a moderate class imbalance that should be considered during model development and evaluation. The visualization was created using the raw dataset before any preprocessing or balancing techniques were applied.
+The bar chart displays the number of patients in each diagnosis category. The No GDM group contains approximately 500 (~65%) patients, while the GDM group contains approximately 268 (~35%) patients. This indicates that the dataset contains more patients without gestational diabetes than patients with gestational diabetes, suggesting a moderate class imbalance that should be considered during model development and evaluation. The visualization was created using the raw dataset before any preprocessing or balancing techniques were applied.
 
 ## Plot 2: Glucose Distribution by Diagnosis
 
@@ -88,11 +88,11 @@ ggplot(patients, aes(x = Glucose, fill = factor(Diagnosis))) +
   theme_minimal()
 ```
 ##Interpretation-
-The histogram shows that patients diagnosed with GDM generally have higher glucose levels than patients in the No GDM group. The GDM distribution is shifted to the right, with a larger concentration of observations above 140 mg/dL, while the No GDM group is concentrated around lower glucose values. Although there is some overlap between the two groups, the separation between the distributions suggests that glucose is likely an important predictor of gestational diabetes in this dataset. The visualization also reveals a few glucose values of zero, which are not clinically realistic and will be treated as missing values during data preparation.
+The histogram shows that patients diagnosed with GDM generally have higher glucose levels than patients in the No GDM group. The GDM distribution is shifted to the right, with a larger concentration of observations above 140 mg/dL, while the No GDM group is concentrated around lower glucose values. Although there is some overlap between the two groups, the separation between the distributions suggests that glucose is likely an important predictor of gestational diabetes in this dataset. This aligns with our literature review, where glucose measurements were considered as consistently supported predictors in GDM prediction models [4], [5]. The visualization also reveals a few glucose values of zero, which are not clinically realistic and will be treated as missing values during data preparation.
 
 ## Plot 3: BMI Distribution by Diagnosis
 
-```{r }
+```{r BMI-by-diagnosis}
 ggplot(patients, aes(x = BMI, fill = factor(Diagnosis))) +
   geom_histogram(bins = 30, alpha = 0.6, position = "identity") +
   scale_fill_manual(values = c("steelblue", "tomato"),
@@ -103,11 +103,11 @@ ggplot(patients, aes(x = BMI, fill = factor(Diagnosis))) +
   theme_minimal()
 ```
 ##Interpretation-
-The histogram shows that patients diagnosed with GDM tend to have higher BMI values than patients in the No GDM group. The GDM distribution is shifted slightly to the right, indicating that higher BMI may be associated with an increased risk of gestational diabetes. However, there is considerable overlap between the two groups, suggesting that BMI alone is not sufficient to distinguish between GDM and No GDM cases. The visualization also shows a few BMI values of zero, which are not clinically realistic and will be treated as missing values during data preparation.
+The histogram shows that patients diagnosed with GDM tend to have higher BMI values than patients in the No GDM group. The GDM distribution is shifted slightly to the right, indicating that higher BMI may be associated with an increased risk of gestational diabetes. This is also consistent with the literature, where BMI IS identified as one of the most commonly used and supported predictors in GDM prediction models [4], [9]. However, there is considerable overlap between the two groups, suggesting that BMI alone is not sufficient to distinguish between GDM and No GDM cases. The visualization also shows a few BMI values of zero, which are not clinically realistic and will be treated as missing values during data preparation.
 
 ## Plot 4: Boxplots of Key Predictors by Diagnosis
 
-```{r }
+```{r boxplots-key-predictors}
 ggplot(patients, aes(x = factor(Diagnosis), y = Glucose,
                      fill = factor(Diagnosis))) +
   geom_boxplot(alpha = 0.7) +
@@ -153,7 +153,7 @@ GDM patients show higher median values for Glucose, BMI, Age, and Pedigree compa
 
 ## Plot 5: Age vs Glucose Scatterplot by Diagnosis
 
-```{r }
+```{r age-glucose-scatter}
 ggplot(patients, aes(x = Age, y = Glucose,
                      color = factor(Diagnosis))) +
   geom_point(alpha = 0.6) +
@@ -165,13 +165,13 @@ ggplot(patients, aes(x = Age, y = Glucose,
   theme_minimal()
 ```
 ##Interpretation-
-The scatterplot shows the relationship between age and glucose levels for patients with and without gestational diabetes. Patients diagnosed with GDM tend to have higher glucose values across most age groups, while patients without GDM are more concentrated at lower glucose levels. There does not appear to be a strong linear relationship between age and glucose, but glucose levels seem to be more useful than age for distinguishing between the two diagnosis groups. A few glucose values of zero are also present and will be treated as missing values during data preparation.
+The scatterplot shows the relationship between age and glucose levels for patients with and without gestational diabetes. Patients diagnosed with GDM tend to have higher glucose values across most age groups, while patients without GDM are more concentrated at lower glucose levels. There does not appear to be a strong linear relationship between age and glucose, but glucose levels seem to be more useful than age for distinguishing between the two diagnosis groups. A few glucose values of zero are also present and will be treated as missing values during data preparation. This plot also shows a small number of unusually high ages for the GDM dataset, so those observations should be interpreted cautiously. 
 
 # 2d: Missing Value Analysis
 
 ## Step 1: Check for NA values and Zero values
 
-```{r}
+```{r na-zero-check}
 # Check for actual NA values first
 colSums(is.na(patients))
 
@@ -179,11 +179,11 @@ colSums(is.na(patients))
 colSums(patients == 0)
 ```
 ##Interpretation-
-No variables contain NA values. However Glucose, BloodPressure, SkinThickness, Insulin, and BMI contain zeros that are not physiologically possible. These are treated as missing data. Pregnancies and Diagnosis zeros are valid and left unchanged. Pedigree and Age have no zeros and no missing values.
+No variables contain NA values. However Glucose, BloodPressure, SkinThickness, Insulin, and BMI contain zeros that are not physiologically possible. These are treated as missing data. Again, this is consistent with diabetes prediction preprocessing practices where biologically implausible zero values are treated as missing or invalid rather than true measurements[16]. Pregnancies and Diagnosis zeros are valid and left unchanged. Pedigree and Age have no zeros and no missing values.
 
 ## Step 2: Replace invalid zeros with NA
 
-```{r}
+```{r replace-zeros}
 # Replace zeros with NA only in variables where zero is not valid
 patients_clean    <- patients
 invalid_zero_vars <- c("Glucose", "BloodPressure", "SkinThickness",
@@ -202,7 +202,7 @@ After replacing invalid zeros with NA, five variables now show missing values. I
 
 ## Step 3: Split the data BEFORE imputation to prevent data leakage
 
-```{r }
+```{r data-split}
 # Split must happen before imputation
 # Any median calculated after splitting uses training data only
 # This prevents test data from influencing the imputation process
@@ -236,7 +236,7 @@ The dataset was split into 70% training (537 observations) and 30% testing (231 
 
 ## Step 4: Calculate medians from training data only
 
-```{r}
+```{r median-imputation-on-training-split}
 # Calculate median from training data only
 # na.rm = TRUE ensures the invalid zeros already replaced with NA
 # are excluded so the median only uses real observed clinical values
@@ -255,7 +255,7 @@ cat("SkinThickness: ", skin_median,     "\n")
 cat("Insulin:       ", insulin_median,  "\n")
 ```
 ##Interpretation-
-Median values were calculated from the training data only. Glucose median of 119 mg/dL falls within the normal to mildly elevated range expected for a pregnant population being screened for GDM. BloodPressure median of 72 mmHg is consistent with a normal diastolic reading. BMI median of 32 falls in the obese range which is expected given this population. SkinThickness median of 29 mm and Insulin median of 125 mu U/ml are both within plausible clinical ranges. These medians were then applied to both the training and test sets to fill in the missing values. Using training medians for the test set ensures no information from the test data influences the imputation process, which prevents data leakage as highlighted by Netayawijit et al. [16].
+Median values were calculated from the training data only. The medians used for imputation were 119 mg/dL for Glucose, 72 mmHg for BloodPressure, 32 for BMI, 29 mm for SkinThickness, and 125 mu U/ml for Insulin. These medians were then applied to both the training and test sets to fill in the missing values. Using training medians for the test set ensures no information from the test data influences the imputation process, which prevents data leakage as highlighted by Netayawijit et al. [16].
 
 ## Step 5: Apply those same medians to both training and test data
 
@@ -306,7 +306,7 @@ After imputation both the training and test sets now have zero missing values ac
 # 2e: Outlier Detection and Handling
 ## Detect Outliers
 
-```{r}
+```{r iqr}
 # Function to count outliers using IQR rule
 detect_outliers <- function(x) {
   Q1  <- quantile(x, 0.25, na.rm = TRUE)
@@ -324,7 +324,7 @@ The IQR rule identified outliers in seven of the nine variables. Insulin has the
 
 ## Visualize Outliers Before Capping
 
-```{r}
+```{r visualize-outliers}
 # Insulin
 ggplot(train_data, aes(x = factor(Diagnosis), y = Insulin,
                        fill = factor(Diagnosis))) +
@@ -411,7 +411,7 @@ ggplot(train_data, aes(x = factor(Diagnosis), y = Pregnancies,
 ```
 
 ## Cap Outliers Using 1st and 99th Percentile
-```{r }
+```{r capping}
 numeric_vars <- names(train_data)[names(train_data) != "Diagnosis"]
 
 # Store cap boundaries from training data
@@ -449,9 +449,8 @@ print(setNames(sapply(numeric_vars, function(v) {
   sum(test_data[[v]] < cap_lower[[v]] | test_data[[v]] > cap_upper[[v]])
 }), numeric_vars))
 ```
-
 ##Interpretation-
-After capping at the 1st and 99th percentile using boundaries calculated from the training data only, outlier counts drop to zero across all variables in both the training and test sets. The same boundaries were stored and applied consistently to both sets, ensuring no data leakage. All 537 training observations and 231 test observations are preserved since capping adjusts extreme values rather than removing rows.
+Before capping, the boxplots showed several outliers flagged by the IQR test, with insulin having the most extreme spread. To reduce the influence of the extreme values while still preserving these records, the numeric predictors were capped at the first and 99th percentiles. These boundaries were calculated on the training data only and then applied to both the training and testing sets. With this approach, all 537 training observations and 231 test observations are preserved since capping adjusts extreme values rather than removing rows.
 
 
 #Step 3: Feature Selection and Data Processing
@@ -809,9 +808,16 @@ ggplot(calibration_summary, aes(x = predicted, y = actual)) +
   theme_minimal()
 
 ```
+```{r brier-score}
+#Brier score for logistic regression probability predictions
+actual_gdm <- ifelse(as.character(test_data$Diagnosis) %in% c("1", "GDM"), 1, 0)
 
+brier_score <- mean((logistic_probs - actual_gdm)^2)
+
+cat("Logistic Regression Brier Score:", round(brier_score, 3), "\n")
+```
 ##Interpretation-
-The calibration analysis grouped predicted probabilities into ten bins and compared the mean predicted probability in each bin to the observed proportion of actual GDM cases. The model showed strong calibration at the extremes, with the lowest and high probability bins closely matching their observed outcomes. However several middle bins, particularly the 0.3 to 0.4 and 0.6 to 0.7 ranges, showed noticeable overconfidence where predicted probabilities exceeded the observed proportion of positive cases. This is likely a result of the relatively small test set of 231 observations, which leaves few patients per bin and makes the observed proportions less stable. Despite this variability in the middle ranges, the model demonstrates reasonable overall calibration, particularly in the high confidence ranges most relevant to clinical decision making.
+The calibration analysis grouped predicted probabilities into ten bins and compared the mean predicted probability in each bin to the observed proportion of actual GDM cases. The model showed strong calibration at the extremes, with the lowest and highest probability bins closely matching their observed outcomes. However several middle bins, particularly the 0.3 to 0.4 and 0.6 to 0.7 ranges, showed noticeable overconfidence where predicted probabilities exceeded the observed proportion of positive cases. This is likely a result of the relatively small test set of 231 observations, which leaves few patients per bin and makes the observed proportions less stable. Despite this variability in the middle ranges, the model demonstrates reasonable overall calibration, particularly in the high confidence ranges most relevant to clinical decision making. The added Brier score provides a numeric view of the model's probability prediction error, with a lower score indicating better prediction performance [21]. With a score of 0.162, the model demonstrates reasonable calibration despite some variability in the middle ranges.
 
 
 
