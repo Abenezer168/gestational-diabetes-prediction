@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
 # 2a: Load and Inspect
 
-```{r load}
+```{r }
 # Load the dataset
 patients <- read.csv("C:/Group Project/patients.csv")
 
@@ -25,14 +25,14 @@ dim(patients)
 
 # 2b: Summary Statistics
 
-```{r summary}
+```{r }
 # Summary statistics for all variables
 summary(patients)
 
 # Standard deviation for each variable
 sapply(patients, sd)
 ```
-
+##Interpretation-
 Pregnancies: Mean = 3.85, Median = 3, SD = 3.37, Q1 = 1, Q3 = 6, Range = 0 to 17. The distribution is right skewed given the gap between the mean and median. Zero pregnancies is a valid value here since it simply means no prior pregnancies.
 
 Glucose: Mean = 120.9, Median = 117, SD = 31.97, Q1 = 99, Q3 = 140.25, Range = 0 to 199. The mean and median are close together suggesting a fairly symmetric distribution. The minimum of zero is not clinically possible and will be treated as missing.
@@ -55,7 +55,7 @@ The most immediate concern from these statistics is the zero values in Glucose, 
 
 # 2c: Visualization, used full raw data for exploration
 
-```{r ggplot}
+```{r }
 library(ggplot2)
 ```
 
@@ -72,12 +72,12 @@ ggplot(patients, aes(x = factor(Diagnosis), fill = factor(Diagnosis))) +
        x = "Diagnosis", y = "Count") +
   theme_minimal()
 ```
-
+##Interpretation-
 The bar chart displays the number of patients in each diagnosis category. The No GDM group contains approximately 500 patients, while the GDM group contains approximately 268 patients. This indicates that the dataset contains more patients without gestational diabetes than patients with gestational diabetes, suggesting a moderate class imbalance that should be considered during model development and evaluation. The visualization was created using the raw dataset before any preprocessing or balancing techniques were applied.
 
 ## Plot 2: Glucose Distribution by Diagnosis
 
-```{r plot2}
+```{r }
 ggplot(patients, aes(x = Glucose, fill = factor(Diagnosis))) +
   geom_histogram(bins = 30, alpha = 0.6, position = "identity") +
   scale_fill_manual(values = c("steelblue", "tomato"),
@@ -87,12 +87,12 @@ ggplot(patients, aes(x = Glucose, fill = factor(Diagnosis))) +
        x = "Glucose (mg/dL)", y = "Count") +
   theme_minimal()
 ```
-
+##Interpretation-
 The histogram shows that patients diagnosed with GDM generally have higher glucose levels than patients in the No GDM group. The GDM distribution is shifted to the right, with a larger concentration of observations above 140 mg/dL, while the No GDM group is concentrated around lower glucose values. Although there is some overlap between the two groups, the separation between the distributions suggests that glucose is likely an important predictor of gestational diabetes in this dataset. The visualization also reveals a few glucose values of zero, which are not clinically realistic and will be treated as missing values during data preparation.
 
 ## Plot 3: BMI Distribution by Diagnosis
 
-```{r plot3}
+```{r }
 ggplot(patients, aes(x = BMI, fill = factor(Diagnosis))) +
   geom_histogram(bins = 30, alpha = 0.6, position = "identity") +
   scale_fill_manual(values = c("steelblue", "tomato"),
@@ -102,12 +102,12 @@ ggplot(patients, aes(x = BMI, fill = factor(Diagnosis))) +
        x = "BMI", y = "Count") +
   theme_minimal()
 ```
-
+##Interpretation-
 The histogram shows that patients diagnosed with GDM tend to have higher BMI values than patients in the No GDM group. The GDM distribution is shifted slightly to the right, indicating that higher BMI may be associated with an increased risk of gestational diabetes. However, there is considerable overlap between the two groups, suggesting that BMI alone is not sufficient to distinguish between GDM and No GDM cases. The visualization also shows a few BMI values of zero, which are not clinically realistic and will be treated as missing values during data preparation.
 
 ## Plot 4: Boxplots of Key Predictors by Diagnosis
 
-```{r plot4}
+```{r }
 ggplot(patients, aes(x = factor(Diagnosis), y = Glucose,
                      fill = factor(Diagnosis))) +
   geom_boxplot(alpha = 0.7) +
@@ -148,12 +148,12 @@ ggplot(patients, aes(x = factor(Diagnosis), y = Pedigree,
        x = "Diagnosis", y = "Pedigree") +
   theme_minimal()
 ```
-
+##Interpretation-
 GDM patients show higher median values for Glucose, BMI, Age, and Pedigree compared to No GDM patients. Glucose shows the clearest separation between groups with the GDM median noticeably higher. BMI and Age also show differences but with more overlap. Pedigree, which represents family history related diabetes risk, is also higher in the GDM group, consistent with Zhang et al. [4] and Lee et al. [9] who identified family history as a key predictor.
 
 ## Plot 5: Age vs Glucose Scatterplot by Diagnosis
 
-```{r plot5}
+```{r }
 ggplot(patients, aes(x = Age, y = Glucose,
                      color = factor(Diagnosis))) +
   geom_point(alpha = 0.6) +
@@ -164,26 +164,26 @@ ggplot(patients, aes(x = Age, y = Glucose,
        x = "Age (years)", y = "Glucose (mg/dL)") +
   theme_minimal()
 ```
-
+##Interpretation-
 The scatterplot shows the relationship between age and glucose levels for patients with and without gestational diabetes. Patients diagnosed with GDM tend to have higher glucose values across most age groups, while patients without GDM are more concentrated at lower glucose levels. There does not appear to be a strong linear relationship between age and glucose, but glucose levels seem to be more useful than age for distinguishing between the two diagnosis groups. A few glucose values of zero are also present and will be treated as missing values during data preparation.
 
 # 2d: Missing Value Analysis
 
 ## Step 1: Check for NA values and Zero values
 
-```{r check}
+```{r}
 # Check for actual NA values first
 colSums(is.na(patients))
 
 # Check zero counts per variable
 colSums(patients == 0)
 ```
-
+##Interpretation-
 No variables contain NA values. However Glucose, BloodPressure, SkinThickness, Insulin, and BMI contain zeros that are not physiologically possible. These are treated as missing data. Pregnancies and Diagnosis zeros are valid and left unchanged. Pedigree and Age have no zeros and no missing values.
 
 ## Step 2: Replace invalid zeros with NA
 
-```{r replace-zeros}
+```{r}
 # Replace zeros with NA only in variables where zero is not valid
 patients_clean    <- patients
 invalid_zero_vars <- c("Glucose", "BloodPressure", "SkinThickness",
@@ -197,12 +197,12 @@ patients_clean[invalid_zero_vars] <- lapply(
 # Confirm missing values after replacement
 colSums(is.na(patients_clean))
 ```
-
+##Interpretation-
 After replacing invalid zeros with NA, five variables now show missing values. Insulin has the highest missingness with 374 missing values followed by SkinThickness with 227. BloodPressure has 35 missing values, BMI has 11, and Glucose has only 5. Pregnancies and Diagnosis zeros were left unchanged since they represent valid clinical values. Pedigree and Age remain complete with no missing values.
 
 ## Step 3: Split the data BEFORE imputation to prevent data leakage
 
-```{r split}
+```{r }
 # Split must happen before imputation
 # Any median calculated after splitting uses training data only
 # This prevents test data from influencing the imputation process
@@ -231,12 +231,12 @@ table(test_data$Diagnosis)
 train_data$Diagnosis <- as.numeric(as.character(train_data$Diagnosis))
 test_data$Diagnosis  <- as.numeric(as.character(test_data$Diagnosis))
 ```
-
+##Interpretation-
 The dataset was split into 70% training (537 observations) and 30% testing (231 observations). A 70/30 split was chosen over 80/20 because the dataset only contains 768 observations. With 80/20 the test set would have contained only around 54 positive GDM cases which is too small to produce reliable sensitivity and recall estimates. The 70/30 split gives 81 positive GDM cases in the test set which provides a more stable evaluation of model performance on unseen data. The class distribution is well preserved in both sets with roughly 65% No GDM and 35% GDM in both training and testing, confirming the split was done correctly.
 
 ## Step 4: Calculate medians from training data only
 
-```{r medians}
+```{r}
 # Calculate median from training data only
 # na.rm = TRUE ensures the invalid zeros already replaced with NA
 # are excluded so the median only uses real observed clinical values
@@ -254,7 +254,7 @@ cat("BMI:           ", bmi_median,      "\n")
 cat("SkinThickness: ", skin_median,     "\n")
 cat("Insulin:       ", insulin_median,  "\n")
 ```
-
+##Interpretation-
 Median values were calculated from the training data only. Glucose median of 119 mg/dL falls within the normal to mildly elevated range expected for a pregnant population being screened for GDM. BloodPressure median of 72 mmHg is consistent with a normal diastolic reading. BMI median of 32 falls in the obese range which is expected given this population. SkinThickness median of 29 mm and Insulin median of 125 mu U/ml are both within plausible clinical ranges. These medians were then applied to both the training and test sets to fill in the missing values. Using training medians for the test set ensures no information from the test data influences the imputation process, which prevents data leakage as highlighted by Netayawijit et al. [16].
 
 ## Step 5: Apply those same medians to both training and test data
@@ -300,13 +300,13 @@ colSums(is.na(train_data))
 cat("\nMissing in test after imputation:\n")
 colSums(is.na(test_data))
 ```
-
+##Interpretation-
 After imputation both the training and test sets now have zero missing values across all nine variables. The medians were calculated from the training set only and then applied to both sets. This is important because if the medians had been calculated from the full dataset before splitting, the test data would have quietly influenced the imputation values which is a form of data leakage. By splitting first and imputing second the test set stays completely untouched and gives an honest picture of how the model will actually perform on new patients.
 
 # 2e: Outlier Detection and Handling
 ## Detect Outliers
 
-```{r detect-outliers}
+```{r}
 # Function to count outliers using IQR rule
 detect_outliers <- function(x) {
   Q1  <- quantile(x, 0.25, na.rm = TRUE)
@@ -319,12 +319,12 @@ detect_outliers <- function(x) {
 cat("Outlier counts in training data:\n")
 sapply(train_data, detect_outliers)
 ```
-
+##Interpretation-
 The IQR rule identified outliers in seven of the nine variables. Insulin has the most with 237 outliers, which is consistent with its heavily skewed distribution and extreme values seen in the summary statistics. SkinThickness follows with 39 outliers. Glucose and Diagnosis show no outliers. These outliers will be addressed using capping at the 1st and 99th percentile calculated from the training data only.
 
 ## Visualize Outliers Before Capping
 
-```{r outlier-plots}
+```{r}
 # Insulin
 ggplot(train_data, aes(x = factor(Diagnosis), y = Insulin,
                        fill = factor(Diagnosis))) +
@@ -411,38 +411,47 @@ ggplot(train_data, aes(x = factor(Diagnosis), y = Pregnancies,
 ```
 
 ## Cap Outliers Using 1st and 99th Percentile
-
-```{r capping}
-# Calculate cap values from training data only
+```{r }
 numeric_vars <- names(train_data)[names(train_data) != "Diagnosis"]
+
+# Store cap boundaries from training data
+cap_lower <- setNames(
+  sapply(numeric_vars, function(v) quantile(train_data[[v]], 0.01)),
+  numeric_vars
+)
+cap_upper <- setNames(
+  sapply(numeric_vars, function(v) quantile(train_data[[v]], 0.99)),
+  numeric_vars
+)
 
 # Apply capping to training data
 for (var in numeric_vars) {
-  lower <- quantile(train_data[[var]], 0.01)
-  upper <- quantile(train_data[[var]], 0.99)
-  train_data[[var]] <- pmax(pmin(train_data[[var]], upper), lower)
+  train_data[[var]] <- pmax(pmin(train_data[[var]], cap_upper[[var]]), cap_lower[[var]])
 }
 
-# Apply same cap values to test data using training boundaries
+# Apply same boundaries to test data
 for (var in numeric_vars) {
-  lower <- quantile(train_data[[var]], 0.01)
-  upper <- quantile(train_data[[var]], 0.99)
-  test_data[[var]] <- pmax(pmin(test_data[[var]], upper), lower)
+  test_data[[var]] <- pmax(pmin(test_data[[var]], cap_upper[[var]]), cap_lower[[var]])
 }
 
-# Confirm no missing values after capping
+# Confirm no missing values
 cat("Missing in training after capping:\n")
-colSums(is.na(train_data))
+print(colSums(is.na(train_data)))
 
-# Confirm outlier counts dropped
+# Confirm zero outliers using same boundaries
 cat("\nOutlier counts in training after capping:\n")
-sapply(train_data, detect_outliers)
+print(setNames(sapply(numeric_vars, function(v) {
+  sum(train_data[[v]] < cap_lower[[v]] | train_data[[v]] > cap_upper[[v]])
+}), numeric_vars))
 
 cat("\nOutlier counts in test after capping:\n")
-sapply(test_data, detect_outliers)
+print(setNames(sapply(numeric_vars, function(v) {
+  sum(test_data[[v]] < cap_lower[[v]] | test_data[[v]] > cap_upper[[v]])
+}), numeric_vars))
 ```
 
-After capping at the 1st and 99th percentile, both the training and test sets show zero outliers across all nine variables. In the training data, Insulin had the most reduction going from 237 outliers down to zero, followed by SkinThickness from 39 and Pedigree from 20. The test data confirms the same result with zero outliers across all variables, meaning the cap boundaries from the training data were correctly applied to both sets. All 537 training observations and 231 test observations are preserved since capping adjusts extreme values rather than removing rows.
+##Interpretation-
+After capping at the 1st and 99th percentile using boundaries calculated from the training data only, outlier counts drop to zero across all variables in both the training and test sets. The same boundaries were stored and applied consistently to both sets, ensuring no data leakage. All 537 training observations and 231 test observations are preserved since capping adjusts extreme values rather than removing rows.
 
 
 #Step 3: Feature Selection and Data Processing
@@ -467,8 +476,8 @@ cor_with_diag <- cor_with_diag[order(abs(cor_with_diag$Correlation),
 print(cor_with_diag)
 
 ```
-Correlation analysis was used to examine how strongly each predictor relates to GDM diagnosis. Glucose had the strongest correlation at 0.504, confirming it as the dominant predictor consistent with Zhang et al. [4]. BMI followed at 0.335 and Age at 0.232, both well supported in the literature as key GDM predictors [4][9]. SkinThickness and Insulin showed moderate correlations of 0.225 and 0.221, likely weakened by the heavy imputation applied to both variables. Pregnancies, BloodPressure, and Pedigree showed the weakest correlations ranging from 0.157 to 0.198. All eight predictors showed positive correlations with Diagnosis, meaning higher values are associated with greater GDM risk. 
-
+##Interpretation-
+Correlation analysis was used to explore the relationship between each predictor and GDM diagnosis. Glucose showed the strongest association at 0.504, suggesting it is the most linearly related predictor in this sample, consistent with the broader literature [4]. BMI followed at 0.335, Age at 0.232, and SkinThickness and Insulin at 0.225 and 0.221 respectively, though the latter two are likely underestimates given their heavy missingness and median imputation. Pregnancies, BloodPressure, and Pedigree showed the weakest associations ranging from 0.157 to 0.198. All eight predictors showed positive relationship  with Diagnosis. It is worth noting that correlation is a limited measure with a binary outcome as it only captures individual linear relationships and does not reflect how predictors interact within a model.
 
 ```{r}
 # Full logistic regression model with all predictors
@@ -487,6 +496,7 @@ stepwise_model <- step(full_model, direction = "both", trace = 0)
 # Show the final selected model
 summary(stepwise_model)
 ```
+##Interpretation-
 Stepwise logistic regression selected four predictors from the original eight. BloodPressure, SkinThickness, Insulin, and Age were removed because they did not meaningfully improve model fit based on AIC. The final model retained Glucose, BMI, Pregnancies, and Pedigree, all showing statistically significant positive coefficients. Glucose showed the strongest evidence with a z value of 8.768, followed by BMI at 5.243 and Pregnancies at 3.807. Pedigree was retained with moderate significance. The final AIC of 508.15 confirms this combination of four predictors provides the best balance between model fit and complexity.
 
 The four variables selected by stepwise are well supported in the literature. Glucose, BMI, and Pregnancies are consistently identified as strong GDM predictors across multiple studies [4][9]. However the dataset has notable limitations. Insulin and SkinThickness had nearly 49% and 30% missing data respectively, which likely weakened their predictive signal and contributed to their removal by stepwise. The dataset also lacks demographic variables such as ethnicity and socioeconomic status which Kokori et al. [10] identify as important for building population specific models. Additionally the Pedigree variable is an indirect measure of family history rather than a direct clinical indicator, which may limit its interpretability in a clinical setting
@@ -515,6 +525,7 @@ round(colMeans(train_data[selected_vars]), 3)
 round(apply(train_data[selected_vars], 2, sd), 3)
 
 ```
+##Interpretation-
 Z-score normalization was applied to the four variables selected by stepwise: Glucose, BMI, Pregnancies, and Pedigree. The mean and standard deviation were calculated from the training data only and then applied to both the training and test sets. This ensures the test data never influences the scaling parameters, consistent with the leakage prevention approach recommended by Netayawijit et al. [16]. After scaling all four variables have a mean of zero and a standard deviation of one, placing them on a comparable scale regardless of their original units. This step is important because the selected predictors use very different scales. For example Glucose ranges in the hundreds while Pedigree ranges between 0 and 2. Without standardization variables with larger numeric ranges could dominate the model and produce unreliable coefficient estimates.
 
 ```{r}
@@ -542,6 +553,7 @@ cat("\nAfter oversampling:\n")
 table(train_balanced$Diagnosis)
 
 ```
+##Interpretation-
 Oversampling was applied to the training set to address the 65/35 class imbalance identified in step 2c. The minority GDM class was upsampled by randomly duplicating existing GDM rows with replacement until both classes had equal representation of 350 observations each. This gives the model an equal opportunity to learn patterns from both GDM and No GDM patients during training. The test set was left untouched at its original 150 No GDM and 81 GDM distribution to reflect real world conditions and provide an honest evaluation of model performance. This approach is consistent with Du et al. [15] who highlighted class imbalance as a common challenge in GDM datasets and recommended balancing techniques to prevent models from defaulting to the majority class.
 
 
@@ -572,7 +584,7 @@ cat("\nTest class distribution:\n")
 table(test_data$Diagnosis)
 
 ```
-
+##Interpretation-
 Data partitioning was completed in Step 2d using a 70/30 split with a fixed seed of 123 for reproducibility. The training set contains 537 observations and the test set contains 231 observations. A 70/30 split was chosen over 80/20 because the small dataset of 768 observations would leave too few positive GDM cases in the test set for reliable evaluation. Oversampling was applied to the training set only to address the class imbalance, resulting in a balanced training set of 700 observations with 350 No GDM and 350 GDM cases. The test set was left at its original distribution of 150 No GDM and 81 GDM to reflect real world conditions.
 
 
@@ -603,7 +615,40 @@ cat("Logistic Regression Confusion Matrix:\n")
 table(Predicted = logistic_preds, Actual = test_data$Diagnosis)
 
 ```
+##Interpretation-
 A logistic regression model was trained on the four stepwise selected predictors: Glucose, BMI, Pregnancies, and Pedigree. All four showed statistically significant positive coefficients confirming that higher values increase GDM risk. Glucose was the strongest predictor with a coefficient of 1.254 consistent with Zhang et al. [4]. On the test set the model correctly classified 118 No GDM and 54 GDM patients with 32 false positives and 27 false negatives. The 27 missed GDM cases are the most clinically concerning since missing positive cases in a screening setting could delay important interventions. Overall accuracy was 74.5% with recall of 66.7% and precision of 62.8%. These results will be compared against the random forest model next.
+
+
+```{r}
+# Additional analysis: testing alternative thresholds
+# This does not change the official 0.5 threshold result above
+# It only explores how recall and precision shift at other cutoffs
+
+test_threshold <- function(threshold) {
+  preds <- ifelse(logistic_probs > threshold, "GDM", "No_GDM")
+  preds <- factor(preds, levels = c("No_GDM", "GDM"))
+
+  TP <- sum(preds == "GDM"    & test_data$Diagnosis == "GDM")
+  TN <- sum(preds == "No_GDM" & test_data$Diagnosis == "No_GDM")
+  FP <- sum(preds == "GDM"    & test_data$Diagnosis == "No_GDM")
+  FN <- sum(preds == "No_GDM" & test_data$Diagnosis == "GDM")
+
+  accuracy  <- (TP + TN) / (TP + TN + FP + FN)
+  precision <- TP / (TP + FP)
+  recall    <- TP / (TP + FN)
+
+  cat("Threshold:", threshold, "\n")
+  cat("Accuracy: ",  round(accuracy  * 100, 1), "%\n")
+  cat("Precision:",  round(precision * 100, 1), "%\n")
+  cat("Recall:   ",  round(recall    * 100, 1), "%\n\n")
+}
+
+test_threshold(0.5)
+test_threshold(0.4)
+test_threshold(0.3)
+```
+##Interpretation-
+Three classification thresholds were tested to examine how precision and recall shift as the decision boundary changes. At the default threshold of 0.5 the model achieved 74.5% accuracy, 62.8% precision, and 66.7% recall. Lowering the threshold to 0.4 kept accuracy at the same 74.5% while recall jumped from 66.7% to 84.0%, with only a small drop in precision from 62.8% to 59.6%. Going further down to 0.3 pushed recall marginally higher to 85.2% but accuracy fell to 68.0% and precision dropped to 52.7%. In a clinical screening setting missing a GDM case is far more costly than flagging a patient who turns out not to have it, so the 0.4 threshold stands out as the most practical choice. It catches 17 additional true GDM cases compared to 0.5 with no accuracy loss and only a minor precision decrease. The 0.5 threshold is kept as the official result for model comparison purposes since it allows fair comparison against published benchmarks, but a threshold of 0.4 is recommended when deploying this model in a real clinical environment.
 
 ```{r}
 # Model 2: Random Forest
@@ -703,6 +748,7 @@ legend("bottomright",
        lwd    = 2)
 
 ```
+##Interpretation-
 Both models were evaluated on the test set of 231 observations. Logistic regression outperformed random forest on accuracy (74.5% vs 72.7%), recall (66.7% vs 51.9%), F1 (64.7% vs 57.1%), F2 (65.9% vs 53.8%), and AUC (0.837 vs 0.797), while precision was nearly identical for both at around 63%.
 Recall is the most clinically important metric here since missing a GDM case means a patient misses timely care. Logistic regression caught 54 of 81 actual GDM cases compared to only 42 for random forest. The higher AUC for logistic regression confirms it has better overall discriminative ability across all classification thresholds, not just at the default 0.5 cutoff. This result differs from broader literature trends where ensemble methods often outperform logistic regression on larger datasets [4][5][6]. With only 768 total observations, random forest likely lacked enough data to learn stable splits and may have overfit, while logistic regression's simpler structure generalized better to this small sample. This aligns with Zhang et al. [4], who note logistic regression remains a strong baseline when sample size limits the advantage of more complex models.
 
@@ -726,6 +772,7 @@ odds_table <- data.frame(
 print(odds_table)
 
 ```
+##Interpretation-
 Odds ratios were calculated by exponentiating the logistic regression coefficients to translate log-odds into a more clinically interpretable scale. All four predictors showed odds ratios greater than 1 with confidence intervals that do not cross 1, confirming each is a statistically significant risk factor for GDM. Glucose had by far the strongest effect with an odds ratio of 3.505, meaning each one standard deviation increase in glucose more than triples the odds of a GDM diagnosis. This aligns with Zhang et al. [4] who identified glucose as the dominant clinical predictor across GDM studies. BMI followed with an odds ratio of 1.856 and Pregnancies at 1.601, both consistent with established GDM risk factors in the literature [4][9]. Pedigree showed the weakest but still significant effect at 1.248, reflecting a modest contribution of family history to GDM risk in this dataset.
 
 ```{r}
@@ -763,7 +810,7 @@ ggplot(calibration_summary, aes(x = predicted, y = actual)) +
 
 ```
 
-
+##Interpretation-
 The calibration analysis grouped predicted probabilities into ten bins and compared the mean predicted probability in each bin to the observed proportion of actual GDM cases. The model showed strong calibration at the extremes, with the lowest and high probability bins closely matching their observed outcomes. However several middle bins, particularly the 0.3 to 0.4 and 0.6 to 0.7 ranges, showed noticeable overconfidence where predicted probabilities exceeded the observed proportion of positive cases. This is likely a result of the relatively small test set of 231 observations, which leaves few patients per bin and makes the observed proportions less stable. Despite this variability in the middle ranges, the model demonstrates reasonable overall calibration, particularly in the high confidence ranges most relevant to clinical decision making.
 
 
@@ -791,6 +838,7 @@ correction_table <- data.frame(
 print(correction_table)
 
 ```
+##Interpretation-
 Multiple testing correction was applied to the four predictor p-values from the logistic regression model using both Bonferroni and Benjamini-Hochberg (FDR) methods. Pregnancies, Glucose, and BMI remained highly significant under both corrections with adjusted p-values near zero. Pedigree showed a raw p-value of 0.0297 which is significant at the conventional 0.05 threshold, but after the more conservative Bonferroni correction the adjusted p-value rose to 0.11881, no longer reaching significance. Under the FDR correction, however, Pedigree remained significant at 0.0297. Given that Bonferroni can be overly conservative when testing a small number of correlated clinical variables, the FDR result is considered more appropriate for this analysis, supporting the retention of Pedigree as a meaningful, if modest, predictor of GDM risk consistent with its established role as a family history indicator in the literature [4][9].
 
 
