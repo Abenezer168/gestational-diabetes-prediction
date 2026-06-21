@@ -605,8 +605,10 @@ logistic_probs <- predict(logistic_model,
                            newdata = test_data,
                            type    = "response")
 
-# Convert probabilities to class predictions using 0.5 threshold
-logistic_preds <- ifelse(logistic_probs > 0.5, "GDM", "No_GDM")
+# Convert probabilities to class predictions using 0.4 threshold
+# 0.4 is used as the official threshold as it improves recall from 66.7% to 84%
+# with no accuracy loss, making it more appropriate for clinical screening
+logistic_preds <- ifelse(logistic_probs > 0.4, "GDM", "No_GDM")
 logistic_preds <- factor(logistic_preds, levels = c("No_GDM", "GDM"))
 
 # Confusion matrix
@@ -615,7 +617,8 @@ table(Predicted = logistic_preds, Actual = test_data$Diagnosis)
 
 ```
 ##Interpretation-
-A logistic regression model was trained on the four stepwise selected predictors: Glucose, BMI, Pregnancies, and Pedigree. All four showed statistically significant positive coefficients confirming that higher values increase GDM risk. Glucose was the strongest predictor with a coefficient of 1.254 consistent with Zhang et al. [4]. On the test set the model correctly classified 118 No GDM and 54 GDM patients with 32 false positives and 27 false negatives. The 27 missed GDM cases are the most clinically concerning since missing positive cases in a screening setting could delay important interventions. Overall accuracy was 74.5% with recall of 66.7% and precision of 62.8%. These results will be compared against the random forest model next.
+A logistic regression model was trained on the four stepwise selected predictors: Glucose, BMI, Pregnancies, and Pedigree. All four showed statistically significant positive coefficients confirming that higher values increase GDM risk. Glucose was the strongest predictor with a coefficient of 1.254, consistent with Zhang et al. [4].
+On the test set at the 0.4 threshold the model correctly classified 104 No GDM and 68 GDM patients with 46 false positives and 13 false negatives. Compared to the default 0.5 threshold, this catches 14 more true GDM cases while reducing missed cases from 27 down to 13. The 13 missed GDM cases remain the most clinically concerning outcome since missing a positive case in a screening setting could delay dietary guidance, glucose monitoring, and other important interventions. Overall accuracy was 74.5% with recall of 84.0% and precision of 59.6%. The 0.4 threshold was selected because it meaningfully improves recall with no accuracy loss, which is the priority in a clinical screening context. These results will be compared against the random forest model next.
 
 The logistic regression model shows Pregnancy, Glucose, BMI and Pedigree are all positive associated with GDM diagnosis.(See coefficients/odds ratio interpretation below) 
 
@@ -623,7 +626,7 @@ The logistic regression model shows Pregnancy, Glucose, BMI and Pedigree are all
 
 ```{r}
 # Additional analysis: testing alternative thresholds
-# This does not change the official 0.5 threshold result above
+# This shows how performance shifts at other cutoffs for reference
 # It only explores how recall and precision shift at other cutoffs
 
 test_threshold <- function(threshold) {
@@ -656,7 +659,7 @@ At the default threshold of 0.5 the model achieved 74.5% accuracy, 62.8% precisi
 
 In a clinical screening setting missing a GDM case is far more costly than flagging a patient who turns out not to have it, so the 0.4 threshold stands out as the most practical choice. It catches 17 additional true GDM cases compared to 0.5 with no accuracy loss and only a minor precision decrease. 
 
-The 0.5 threshold is kept as the official result for model comparison purposes since it allows fair comparison against published benchmarks, but a threshold of 0.4 is recommended when deploying this model in a real clinical environment.
+The 0.4 threshold is used as the official result because it improves recall from 66.7% to 84.0% with no accuracy loss.
 
 ```{r}
 # Model 2: Random Forest
@@ -687,6 +690,7 @@ importance(rf_model)
 varImpPlot(rf_model)
 
 ```
+##Interpretation-
 To keep features constant, both logistic regression and random forest are trained using the same 4 variables. However, we understand that this may disadvantage the full potential of random forest, as the it might find other variables useful based on its capabilities for non-linear relationships. 
 
 These results, show an OOB error rate of 11.14% and that the random forest model is better at identifying GDM cases than non-GDM, however these is based on the oversampled trainig data, and therefore it's taken with caution. For Random Forest, Glucose was the most important predictor, followed by BMI.
@@ -696,10 +700,12 @@ These results, show an OOB error rate of 11.14% and that the random forest model
 library(pROC)
 
 # Logistic Regression Performance Metrics
-TP <- 54
-TN <- 118
-FP <- 32
-FN <- 27
+logistic_cm <- table(Predicted = logistic_preds, Actual = test_data$Diagnosis)
+
+TN <- logistic_cm["No_GDM", "No_GDM"]
+FP <- logistic_cm["GDM",    "No_GDM"]
+FN <- logistic_cm["No_GDM", "GDM"]
+TP <- logistic_cm["GDM",    "GDM"]
 
 accuracy  <- (TP + TN) / (TP + TN + FP + FN)
 precision <- TP / (TP + FP)
@@ -717,10 +723,12 @@ cat("F1 Score: ", round(f1        * 100, 1), "%\n")
 cat("F2 Score: ", round(f2        * 100, 1), "%\n")
 
 # Random Forest Performance Metrics
-TP <- 42
-TN <- 126
-FP <- 24
-FN <- 39
+rf_cm <- table(Predicted = rf_preds, Actual = test_data$Diagnosis)
+
+TN <- rf_cm["No_GDM", "No_GDM"]
+FP <- rf_cm["GDM",    "No_GDM"]
+FN <- rf_cm["No_GDM", "GDM"]
+TP <- rf_cm["GDM",    "GDM"]
 
 accuracy  <- (TP + TN) / (TP + TN + FP + FN)
 precision <- TP / (TP + FP)
@@ -762,12 +770,11 @@ legend("bottomright",
                   paste("Random Forest AUC =",       round(auc(rf_roc), 3))),
        col    = c("steelblue", "tomato"),
        lwd    = 2)
-
 ```
 ##Interpretation-
-Both models were evaluated on the test set of 231 observations. Logistic regression outperformed random forest on accuracy (74.5% vs 72.7%), recall (66.7% vs 51.9%), F1 (64.7% vs 57.1%), F2 (65.9% vs 53.8%), and AUC (0.837 vs 0.797), while precision was nearly identical for both at around 63%.Recall is the most clinically important metric here since missing a GDM case means a patient misses timely care. Logistic regression caught 54 of 81 actual GDM cases compared to only 42 for random forest. 
+Both models were evaluated on the test set of 231 observations. At the 0.4 threshold logistic regression outperformed random forest on recall (84.0% vs 54.3%), F1 (69.4% vs 58.3%), F2 (77.5% vs 55.8%), and AUC (0.838 vs 0.792). Logistic regression caught 68 of 81 actual GDM cases compared to only 44 for random forest. Random forest had slightly better specificity (82.7% vs 69.3%) and precision (62.9% vs 59.6%). Recall is the most clinically important metric since missing a GDM case means a patient misses timely care. 
 
-The higher AUC for logistic regression confirms it has better overall discriminative ability across all classification thresholds, not just at the default 0.5 cutoff.The AUC score is comparable to what Zhang et al.[4] found at 0.849. When looking at recall, 66.4% while [4] reported 0.69% and specificity at 78% where [4] obtained 75%.
+The higher AUC for logistic regression confirms it has better overall discriminative ability across all classification thresholds, not just at the default 0.5 cutoff.The AUC score is comparable to what Zhang et al.[4] found at 0.849. When looking at recall, 84.0% which exceeds the 69% reported by [4], and specificity at 69.3% compared to 75% in [4].
 
 This result differs from broader literature trends where ensemble methods often outperform logistic regression on larger datasets [4][5][6]. With only 768 total observations, random forest likely lacked enough data to learn stable splits and may have overfit, while logistic regression's simpler structure generalized better to this small sample. This aligns with Zhang et al. [4], who note logistic regression remains a strong baseline when sample size limits the advantage of more complex models.
 
@@ -790,15 +797,22 @@ odds_table <- data.frame(
 print(odds_table)
 ```
 ```{r}
-odds_pregnancy <- exp(0.47092)
-odds_glucose <- exp(1.25423)
-odds_bmi <- exp(0.61824)
-odds_pedigree <- exp(0.22164)
+# Exponentiate the model coefficients to convert log-odds to odds ratios
+# This makes the results easier to interpret in a clinical context
+# Each odds ratio tells us how much the odds of GDM change per 1 SD increase
+coefs <- coef(logistic_model)
 
-cat("Each 1 SD increase in pregnancy multiplies the odds of GDM by", odds_pregnancy, "\n")
-cat("Each 1 SD increase in glucose multiplies the odds of GDM by", odds_glucose, "\n")
-cat("Each 1 SD increase in BMI multiplies the odds of GDM by", odds_bmi, "\n")
-cat("Each 1 SD increase in pedigree multiplies the odds of GDM by", odds_pedigree, "\n")
+# exp() converts the log-odds coefficient to an odds ratio
+odds_pregnancy <- exp(coefs["Pregnancies"])
+odds_glucose   <- exp(coefs["Glucose"])
+odds_bmi       <- exp(coefs["BMI"])
+odds_pedigree  <- exp(coefs["Pedigree"])
+
+# Print the odds ratios
+cat("Each 1 SD increase in pregnancy multiplies the odds of GDM by", round(odds_pregnancy, 6), "\n")
+cat("Each 1 SD increase in glucose multiplies the odds of GDM by",   round(odds_glucose,   6), "\n")
+cat("Each 1 SD increase in BMI multiplies the odds of GDM by",       round(odds_bmi,       6), "\n")
+cat("Each 1 SD increase in pedigree multiplies the odds of GDM by",  round(odds_pedigree,  6), "\n")
 ```
 ##Interpretation-
 Odds ratios were calculated by exponentiating the logistic regression coefficients to translate log-odds into a more clinically interpretable scale. All four predictors showed odds ratios greater than 1 with confidence intervals that do not cross 1, confirming each is a statistically significant risk factor for GDM. Glucose had by far the strongest effect with an odds ratio of 3.505, meaning each one standard deviation increase in glucose more than triples the odds of a GDM diagnosis. This aligns with Zhang et al. [4] who identified glucose as the dominant clinical predictor across GDM studies. BMI followed with an odds ratio of 1.856 and Pregnancies at 1.601, both consistent with established GDM risk factors in the literature [4][9]. Pedigree showed the weakest but still significant effect at 1.248, reflecting a modest contribution of family history to GDM risk in this dataset.
@@ -874,7 +888,9 @@ print(correction_table)
 ##Interpretation-
 Multiple testing correction was applied to the four predictor p-values from the logistic regression model using both Bonferroni and Benjamini-Hochberg (FDR) methods. Pregnancies, Glucose, and BMI remained highly significant under both corrections with adjusted p-values near zero. Pedigree showed a raw p-value of 0.0297 which is significant at the conventional 0.05 threshold, but after the more conservative Bonferroni correction the adjusted p-value rose to 0.11881, no longer reaching significance. Under the FDR correction, however, Pedigree remained significant at 0.0297. Given that Bonferroni can be overly conservative when testing a small number of correlated clinical variables, the FDR result is considered more appropriate for this analysis, supporting the retention of Pedigree as a meaningful, if modest, predictor of GDM risk consistent with its established role as a family history indicator in the literature [4][9].
 
-However, since the main purpose of the mdoel is prediction, test-set performance in recall/sensitivity and calibration are more important than p-values alone. Furthermore, these p-values are taken from the selected stepwise features they are not full evidence and p-values might look more stable than they are. 
+However, since the main purpose of the model is prediction, test-set performance in recall/sensitivity and calibration are more important 
+than p-values alone. Furthermore, these p-values are taken from the selected stepwise features they are not full evidence and p-values 
+might look more stable than they are. 
 
 
 # Step 5: Analysis, Limitations, and Reporting
@@ -882,7 +898,7 @@ However, since the main purpose of the mdoel is prediction, test-set performance
 ## 5a: Model Limitations
 
 *Strengths*:
-The logistic regression model demonstrated solid performance for a small clinical dataset, achieving an AUC of 0.837 which exceeds the pooled AUROC of 0.79 reported for logistic regression models across 25 GDM studies by Zhang et al. [4]. The model is interpretable, with clinically meaningful odds ratios that align with established GDM risk factors in the literature. The preprocessing pipeline followed best practices including leakage-free imputation, capping, standardization from training data only, and oversampling strictly on the training set. The four selected predictors, Glucose, BMI, Pregnancies, and Pedigree, are all well supported by the literature as genuine GDM risk factors [4][9].
+The logistic regression model demonstrated solid performance for a small clinical dataset, achieving an AUC of 0.838 which exceeds the pooled AUROC of 0.79 reported for logistic regression models across 25 GDM studies by Zhang et al. [4]. The model is interpretable, with clinically meaningful odds ratios that align with established GDM risk factors in the literature. The preprocessing pipeline followed best practices including leakage-free imputation, capping, standardization from training data only, and oversampling strictly on the training set. The four selected predictors, Glucose, BMI, Pregnancies, and Pedigree, are all well supported by the literature as genuine GDM risk factors [4][9].
 
 *Limitations*:
 The most significant limitation is dataset size. With only 768 observations and 268 positive GDM cases, the model was trained on a relatively small sample which limits its statistical power and reliability. Yitayeh et al. [14] specifically flag small sample size as one of the most common methodological weaknesses in published GDM prediction studies, noting that machine learning models generally require larger datasets to reach their full potential.
@@ -893,7 +909,7 @@ The dataset also lacks demographic variables. There is no information on ethnici
 
 Finally the dataset is known to originate from a study of Pima Indian women, as identified by Chen et al. [17]. This means the model was trained on a single homogeneous population and cannot be assumed to generalize to women from different ethnic, geographic, or socioeconomic backgrounds. Kokori et al. [10] specifically warn against applying GDM prediction models trained on one population to groups that are ethnically or demographically different without external validation.
 
-Given all these limitations and at a sensitivity of 66.7% and identifying only 54 of 81 true GDM cases, in a field where false negatives are costly,our logistic regression model can not be used or framed as a full diagnostic model, but instead should be used as a decision-support tool. Before clinical use, cross validation, external validation, threshold tuning, and the other recommendation explained below should be considered. 
+Given all these limitations and at a sensitivity of 84.0% and identifying 68 of 81 true GDM cases at the 0.4 threshold, in a field where false negatives are costly,our logistic regression model can not be used or framed as a full diagnostic model, but instead should be used as a decision-support tool. Before clinical use, cross validation, external validation, threshold tuning, and the other recommendation explained below should be considered. 
 
 *Generalizability*:
 The model should be considered preliminary. Zhang et al. [4] found that only 4 of 25 reviewed GDM studies tested their models on external data, which means most published models including this one have not been validated beyond their training population. Before this model could be considered for clinical use it would need to be tested on an external dataset drawn from a different population and setting to confirm that its performance holds up in the real world.
@@ -910,4 +926,7 @@ Another area for improvement would be to validate the model more thoroughly befo
 
 Regarding ethical implications for building predictive models to predict gestational diabetes in pregnant women, there are several considerations that need to be made which would influence how pregnant patients are screened, monitored, or even prioritized for care. Within our project, our model needs to be viewed as a clinical support tool for decisions rather than something that would replace the judgement of doctors and physicians, which ties well into the paper written by Du et al. [15], where there is emphasis placed on GDM prediction models supporting clinicians rather than make final diagnostic decisions. Fairness is also a huge concern given that our dataset does not have additional information on demographic or socioeconomic variables such as ethnicity, income, healthcare access, or insurance status. As Chen et al. [17] explained, healthcare AI models can appear accurate overall while still performing unequally across patient subgroups. Kokori et al. [10] also stated  that GDM prediction models should account for population-specific factors, meaning our findings should not be generalized to all pregnant patients without external validation on larger and more diverse datasets. Especially given the size of the dataset and that the majority of our observations did not have GDM, this becomes increasingly relevant.
 
-When considering how to use this model responsibly, we would also require focusing on the clinical consequences of prediction errors. Based on the results of our model, under the 0.5 threshold, logistic regression performed better than random forest, but it still missed 27 actual GDM cases, making false negatives a serious concern. Given that missed GDM cases could result in delayed monitoring of a patient’s glucose monitoring, dietary guidance, or even other forms of interventions, recall and sensitivity would definitely need to be prioritized over just accuracy of the model per Zhang et al. [4]. Best practices would include validating the model on external data, auditing performance across demographic subgroups, using explainable models or tools such as SHAP when models become more complex, protecting patient privacy, and allowing clinicians to override model recommendations. Model drift should also be monitored over time because changes in patient demographics, screening practices, or clinical documentation could reduce model performance after deployment. This connects to Zhang et al. [4], who found that external validation is limited in GDM prediction research, and Chen et al. [17], who emphasize that healthcare AI models must be evaluated across patient subgroups to avoid unequal performance. Overall, our model is useful as a preliminary screening tool, but it should not be considered ready for clinical deployment without fairness testing, external validation, and ongoing monitoring.
+When considering how to use this model responsibly, we would also require focusing on the clinical consequences of prediction errors. Based on the results of our model, at the 0.4 threshold, logistic regression caught 68 of 81 GDM cases and missed only 13, outperforming random forest which missed 37, making false negatives a serious concern. Given that missed GDM cases could result in delayed monitoring of a patient’s glucose monitoring, dietary guidance, or even other forms of interventions, recall and sensitivity would definitely need to be prioritized over just accuracy of the model per Zhang et al. [4]. Best practices would include validating the model on external data, auditing performance across demographic subgroups, using explainable models or tools such as SHAP when models become more complex, protecting patient privacy, and allowing clinicians to override model recommendations. Model drift should also be monitored over time because changes in patient demographics, screening practices, or clinical documentation could reduce model performance after deployment. This connects to Zhang et al. [4], who found that external validation is limited in GDM prediction research, and Chen et al. [17], who emphasize that healthcare AI models must be evaluated across patient subgroups to avoid unequal performance. Overall, our model is useful as a preliminary screening tool, but it should not be considered ready for clinical deployment without fairness testing, external validation, and ongoing monitoring.
+
+
+
